@@ -34,11 +34,15 @@
 #ifndef __FETCH_UNIT_HH__
 #define __FETCH_UNIT_HH__
 
-#include <string>
+#include <cassert>
+#include <cstdint>
+#include <deque>
+#include <map>
 #include <utility>
+#include <vector>
 
 #include "arch/gpu_decoder.hh"
-#include "base/statistics.hh"
+#include "base/types.hh"
 #include "config/the_gpu_isa.hh"
 #include "gpu-compute/scheduler.hh"
 #include "mem/packet.hh"
@@ -49,9 +53,9 @@ class Wavefront;
 class FetchUnit
 {
   public:
-    FetchUnit(const ComputeUnitParams* params);
+    FetchUnit(const ComputeUnitParams &p, ComputeUnit &cu);
     ~FetchUnit();
-    void init(ComputeUnit *cu);
+    void init();
     void exec();
     void bindWaveList(std::vector<Wavefront*> *list);
     void initiateFetch(Wavefront *wavefront);
@@ -118,6 +122,18 @@ class FetchUnit
             assert(reserved_pc == reservedPCs.begin());
 
             return reserved_pc->second;
+        }
+
+        /**
+         * returns true if there is an entry reserved for this address,
+         * and false otherwise
+         */
+        bool
+        isReserved(Addr vaddr) const
+        {
+            auto reserved_pc = reservedPCs.find(vaddr);
+            bool is_reserved = (reserved_pc != reservedPCs.end());
+            return is_reserved;
         }
 
         void fetchDone(Addr vaddr);
@@ -222,7 +238,7 @@ class FetchUnit
     };
 
     bool timingSim;
-    ComputeUnit *computeUnit;
+    ComputeUnit &computeUnit;
     TheGpuISA::Decoder decoder;
 
     // Fetch scheduler; Selects one wave from

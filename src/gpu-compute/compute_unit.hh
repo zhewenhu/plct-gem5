@@ -40,10 +40,13 @@
 #include <vector>
 
 #include "base/callback.hh"
+#include "base/compiler.hh"
 #include "base/statistics.hh"
+#include "base/stats/group.hh"
 #include "base/types.hh"
 #include "config/the_gpu_isa.hh"
 #include "enums/PrefetchType.hh"
+#include "gpu-compute/comm.hh"
 #include "gpu-compute/exec_stage.hh"
 #include "gpu-compute/fetch_stage.hh"
 #include "gpu-compute/global_memory_pipeline.hh"
@@ -77,6 +80,121 @@ enum TLB_CACHE
     TLB_MISS_CACHE_HIT,
     TLB_HIT_CACHE_MISS,
     TLB_HIT_CACHE_HIT
+};
+
+/**
+ * WF barrier slots. This represents the barrier resource for
+ * WF-level barriers (i.e., barriers to sync WFs within a WG).
+ */
+class WFBarrier
+{
+  public:
+    WFBarrier() : _numAtBarrier(0), _maxBarrierCnt(0)
+    {
+    }
+
+    static const int InvalidID = -1;
+
+    int
+    numAtBarrier() const
+    {
+        return _numAtBarrier;
+    }
+
+    /**
+     * Number of WFs that have not yet reached the barrier.
+     */
+    int
+    numYetToReachBarrier() const
+    {
+        return _maxBarrierCnt - _numAtBarrier;
+    }
+
+    int
+    maxBarrierCnt() const
+    {
+        return _maxBarrierCnt;
+    }
+
+    /**
+     * Set the maximum barrier count (i.e., the number of WFs that are
+     * participating in the barrier).
+     */
+    void
+    setMaxBarrierCnt(int max_barrier_cnt)
+    {
+        _maxBarrierCnt = max_barrier_cnt;
+    }
+
+    /**
+     * Mark that a WF has reached the barrier.
+     */
+    void
+    incNumAtBarrier()
+    {
+        assert(_numAtBarrier < _maxBarrierCnt);
+        ++_numAtBarrier;
+    }
+
+    /**
+     * Have all WFs participating in this barrier reached the barrier?
+     * If so, then the barrier is satisfied and WFs may proceed past
+     * the barrier.
+     */
+    bool
+    allAtBarrier() const
+    {
+        return _numAtBarrier == _maxBarrierCnt;
+    }
+
+    /**
+     * Decrement the number of WFs that are participating in this barrier.
+     * This should be called when a WF exits.
+     */
+    void
+    decMaxBarrierCnt()
+    {
+        assert(_maxBarrierCnt > 0);
+        --_maxBarrierCnt;
+    }
+
+    /**
+     * Release this barrier resource so it can be used by other WGs. This
+     * is generally called when a WG has finished.
+     */
+    void
+    release()
+    {
+        _numAtBarrier = 0;
+        _maxBarrierCnt = 0;
+    }
+
+    /**
+     * Reset the barrier. This is used to reset the barrier, usually when
+     * a dynamic instance of a barrier has been satisfied.
+     */
+    void
+    reset()
+    {
+        _numAtBarrier = 0;
+    }
+
+  private:
+    /**
+     * The number of WFs in the WG that have reached the barrier. Once
+     * the number of WFs that reach a barrier matches the number of WFs
+     * in the WG, the barrier is satisfied.
+     */
+    int _numAtBarrier;
+
+    /**
+     * The maximum number of WFs that can reach this barrier. This is
+     * essentially the number of WFs in the WG, and a barrier is satisfied
+     * when the number of WFs that reach the barrier equal this value. If
+     * a WF exits early it must decrement this value so that it is no
+     * longer considered for this barrier.
+     */
+    int _maxBarrierCnt;
 };
 
 class ComputeUnit : public ClockedObject
@@ -151,40 +269,6 @@ class ComputeUnit : public ClockedObject
     int numCyclesPerStoreTransfer;  // number of cycles per vector store
     int numCyclesPerLoadTransfer;  // number of cycles per vector load
 
-    // Buffers used to communicate between various pipeline stages
-
-    // At a high level, the following intra-/inter-stage communication occurs:
-    // SCB to SCH: readyList provides per exec resource list of waves that
-    //             passed dependency and readiness checks. If selected by
-    //             scheduler, attempt to add wave to schList conditional on
-    //             RF support.
-    // SCH: schList holds waves that are gathering operands or waiting
-    //      for execution resource availability. Once ready, waves are
-    //      placed on the dispatchList as candidates for execution. A wave
-    //      may spend multiple cycles in SCH stage, on the schList due to
-    //      RF access conflicts or execution resource contention.
-    // SCH to EX: dispatchList holds waves that are ready to be executed.
-    //            LM/FLAT arbitration may remove an LM wave and place it
-    //            back on the schList. RF model may also force a wave back
-    //            to the schList if using the detailed model.
-
-    // List of waves which are ready to be scheduled.
-    // Each execution resource has a ready list. readyList is
-    // used to communicate between scoreboardCheck stage and
-    // schedule stage
-    std::vector<std::vector<Wavefront*>> readyList;
-
-    // List of waves which will be dispatched to
-    // each execution resource. An EXREADY implies
-    // dispatch list is non-empty and
-    // execution unit has something to execute
-    // this cycle. Currently, the dispatch list of
-    // an execution resource can hold only one wave because
-    // an execution resource can execute only one wave in a cycle.
-    // dispatchList is used to communicate between schedule
-    // and exec stage
-    // TODO: convert std::pair to a class to increase readability
-    std::vector<std::pair<Wavefront*, DISPATCH_STATUS>> dispatchList;
     // track presence of dynamic instructions in the Schedule pipeline
     // stage. This is used to check the readiness of the oldest,
     // non-dispatched instruction of every WF in the Scoreboard stage.
@@ -237,12 +321,6 @@ class ComputeUnit : public ClockedObject
     // tracks the last cycle a vector instruction was executed on a SIMD
     std::vector<uint64_t> lastExecCycle;
 
-    // Track the amount of interleaving between wavefronts on each SIMD.
-    // This stat is sampled using instExecPerSimd to compute the number of
-    // instructions that have been executed on a SIMD between a WF executing
-    // two successive instructions.
-    Stats::VectorDistribution instInterleave;
-
     // tracks the number of dyn inst executed per SIMD
     std::vector<uint64_t> instExecPerSimd;
 
@@ -268,16 +346,10 @@ class ComputeUnit : public ClockedObject
 
     /*
      * for Counting page accesses
-     *
-     * cuExitCallback inherits from Callback. When you register a callback
-     * function as an exit callback, it will get added to an exit callback
-     * queue, such that on simulation exit, all callbacks in the callback
-     * queue will have their process() function called.
      */
     bool countPages;
 
     Shader *shader;
-    uint32_t barrier_id;
 
     Tick req_tick_latency;
     Tick resp_tick_latency;
@@ -299,8 +371,6 @@ class ComputeUnit : public ClockedObject
     // number of available scalar registers per SIMD unit
     int numScalarRegsPerSimd;
 
-    void updateReadyList(int unitId);
-
     // this hash map will keep track of page divergence
     // per memory instruction per wavefront. The hash map
     // is cleared in GPUDynInst::updateStats() in gpu_dyn_inst.cc.
@@ -309,7 +379,7 @@ class ComputeUnit : public ClockedObject
     void insertInPipeMap(Wavefront *w);
     void deleteFromPipeMap(Wavefront *w);
 
-    ComputeUnit(const Params *p);
+    ComputeUnit(const Params &p);
     ~ComputeUnit();
 
     // Timing Functions
@@ -328,30 +398,55 @@ class ComputeUnit : public ClockedObject
     void fillKernelState(Wavefront *w, HSAQueueEntry *task);
 
     void startWavefront(Wavefront *w, int waveId, LdsChunk *ldsChunk,
-                        HSAQueueEntry *task, bool fetchContext=false);
+                        HSAQueueEntry *task, int bar_id,
+                        bool fetchContext=false);
 
     void doInvalidate(RequestPtr req, int kernId);
     void doFlush(GPUDynInstPtr gpuDynInst);
 
-    void dispWorkgroup(HSAQueueEntry *task, bool startFromScheduler=false);
-    bool hasDispResources(HSAQueueEntry *task);
+    void dispWorkgroup(HSAQueueEntry *task, int num_wfs_in_wg);
+    bool hasDispResources(HSAQueueEntry *task, int &num_wfs_in_wg);
 
     int cacheLineSize() const { return _cacheLineSize; }
     int getCacheLineBits() const { return cacheLineBits; }
 
-    /* This function cycles through all the wavefronts in all the phases to see
-     * if all of the wavefronts which should be associated with one barrier
-     * (denoted with _barrier_id), are all at the same barrier in the program
-     * (denoted by bcnt). When the number at the barrier matches bslots, then
-     * return true.
-     */
-    int AllAtBarrier(uint32_t _barrier_id, uint32_t bcnt, uint32_t bslots);
+    void resetRegisterPool();
+
+  private:
+    WFBarrier&
+    barrierSlot(int bar_id)
+    {
+        assert(bar_id > WFBarrier::InvalidID);
+        return wfBarrierSlots.at(bar_id);
+    }
+
+    int
+    getFreeBarrierId()
+    {
+        assert(freeBarrierIds.size());
+        auto free_bar_id = freeBarrierIds.begin();
+        int bar_id = *free_bar_id;
+        freeBarrierIds.erase(free_bar_id);
+        return bar_id;
+    }
+
+  public:
+    int numYetToReachBarrier(int bar_id);
+    bool allAtBarrier(int bar_id);
+    void incNumAtBarrier(int bar_id);
+    int numAtBarrier(int bar_id);
+    int maxBarrierCnt(int bar_id);
+    void resetBarrier(int bar_id);
+    void decMaxBarrierCnt(int bar_id);
+    void releaseBarrier(int bar_id);
+    void releaseWFsFromBarrier(int bar_id);
+    int numBarrierSlots() const { return _numBarrierSlots; }
 
     template<typename c0, typename c1>
     void doSmReturn(GPUDynInstPtr gpuDynInst);
 
     virtual void init() override;
-    void sendRequest(GPUDynInstPtr gpuDynInst, int index, PacketPtr pkt);
+    void sendRequest(GPUDynInstPtr gpuDynInst, PortID index, PacketPtr pkt);
     void sendScalarRequest(GPUDynInstPtr gpuDynInst, PacketPtr pkt);
     void injectGlobalMemFence(GPUDynInstPtr gpuDynInst,
                               bool kernelMemSync,
@@ -361,158 +456,17 @@ class ComputeUnit : public ClockedObject
     void processFetchReturn(PacketPtr pkt);
     void updatePageDivergenceDist(Addr addr);
 
-    MasterID masterId() { return _masterId; }
+    RequestorID requestorId() { return _requestorId; }
 
     bool isDone() const;
     bool isVectorAluIdle(uint32_t simdId) const;
 
   protected:
-    MasterID _masterId;
+    RequestorID _requestorId;
 
     LdsState &lds;
 
   public:
-    Stats::Scalar vALUInsts;
-    Stats::Formula vALUInstsPerWF;
-    Stats::Scalar sALUInsts;
-    Stats::Formula sALUInstsPerWF;
-    Stats::Scalar instCyclesVALU;
-    Stats::Scalar instCyclesSALU;
-    Stats::Scalar threadCyclesVALU;
-    Stats::Formula vALUUtilization;
-    Stats::Scalar ldsNoFlatInsts;
-    Stats::Formula ldsNoFlatInstsPerWF;
-    Stats::Scalar flatVMemInsts;
-    Stats::Formula flatVMemInstsPerWF;
-    Stats::Scalar flatLDSInsts;
-    Stats::Formula flatLDSInstsPerWF;
-    Stats::Scalar vectorMemWrites;
-    Stats::Formula vectorMemWritesPerWF;
-    Stats::Scalar vectorMemReads;
-    Stats::Formula vectorMemReadsPerWF;
-    Stats::Scalar scalarMemWrites;
-    Stats::Formula scalarMemWritesPerWF;
-    Stats::Scalar scalarMemReads;
-    Stats::Formula scalarMemReadsPerWF;
-
-    Stats::Formula vectorMemReadsPerKiloInst;
-    Stats::Formula vectorMemWritesPerKiloInst;
-    Stats::Formula vectorMemInstsPerKiloInst;
-    Stats::Formula scalarMemReadsPerKiloInst;
-    Stats::Formula scalarMemWritesPerKiloInst;
-    Stats::Formula scalarMemInstsPerKiloInst;
-
-    // Cycles required to send register source (addr and data) from
-    // register files to memory pipeline, per SIMD.
-    Stats::Vector instCyclesVMemPerSimd;
-    Stats::Vector instCyclesScMemPerSimd;
-    Stats::Vector instCyclesLdsPerSimd;
-
-    Stats::Scalar globalReads;
-    Stats::Scalar globalWrites;
-    Stats::Formula globalMemInsts;
-    Stats::Scalar argReads;
-    Stats::Scalar argWrites;
-    Stats::Formula argMemInsts;
-    Stats::Scalar spillReads;
-    Stats::Scalar spillWrites;
-    Stats::Formula spillMemInsts;
-    Stats::Scalar groupReads;
-    Stats::Scalar groupWrites;
-    Stats::Formula groupMemInsts;
-    Stats::Scalar privReads;
-    Stats::Scalar privWrites;
-    Stats::Formula privMemInsts;
-    Stats::Scalar readonlyReads;
-    Stats::Scalar readonlyWrites;
-    Stats::Formula readonlyMemInsts;
-    Stats::Scalar kernargReads;
-    Stats::Scalar kernargWrites;
-    Stats::Formula kernargMemInsts;
-
-    int activeWaves;
-    Stats::Distribution waveLevelParallelism;
-
-    void updateInstStats(GPUDynInstPtr gpuDynInst);
-
-    // the following stats compute the avg. TLB accesslatency per
-    // uncoalesced request (only for data)
-    Stats::Scalar tlbRequests;
-    Stats::Scalar tlbCycles;
-    Stats::Formula tlbLatency;
-    // hitsPerTLBLevel[x] are the hits in Level x TLB. x = 0 is the page table.
-    Stats::Vector hitsPerTLBLevel;
-
-    Stats::Scalar ldsBankAccesses;
-    Stats::Distribution ldsBankConflictDist;
-
-    // over all memory instructions executed over all wavefronts
-    // how many touched 0-4 pages, 4-8, ..., 60-64 pages
-    Stats::Distribution pageDivergenceDist;
-    // count of non-flat global memory vector instructions executed
-    Stats::Scalar dynamicGMemInstrCnt;
-    // count of flat global memory vector instructions executed
-    Stats::Scalar dynamicFlatMemInstrCnt;
-    Stats::Scalar dynamicLMemInstrCnt;
-
-    Stats::Scalar wgBlockedDueLdsAllocation;
-    // Number of instructions executed, i.e. if 64 (or 32 or 7) lanes are
-    // active when the instruction is committed, this number is still
-    // incremented by 1
-    Stats::Scalar numInstrExecuted;
-    // Number of cycles among successive instruction executions across all
-    // wavefronts of the same CU
-    Stats::Distribution execRateDist;
-    // number of individual vector operations executed
-    Stats::Scalar numVecOpsExecuted;
-    // number of individual f16 vector operations executed
-    Stats::Scalar numVecOpsExecutedF16;
-    // number of individual f32 vector operations executed
-    Stats::Scalar numVecOpsExecutedF32;
-    // number of individual f64 vector operations executed
-    Stats::Scalar numVecOpsExecutedF64;
-    // number of individual FMA 16,32,64 vector operations executed
-    Stats::Scalar numVecOpsExecutedFMA16;
-    Stats::Scalar numVecOpsExecutedFMA32;
-    Stats::Scalar numVecOpsExecutedFMA64;
-    // number of individual MAC 16,32,64 vector operations executed
-    Stats::Scalar numVecOpsExecutedMAC16;
-    Stats::Scalar numVecOpsExecutedMAC32;
-    Stats::Scalar numVecOpsExecutedMAC64;
-    // number of individual MAD 16,32,64 vector operations executed
-    Stats::Scalar numVecOpsExecutedMAD16;
-    Stats::Scalar numVecOpsExecutedMAD32;
-    Stats::Scalar numVecOpsExecutedMAD64;
-    // total number of two op FP vector operations executed
-    Stats::Scalar numVecOpsExecutedTwoOpFP;
-    // Total cycles that something is running on the GPU
-    Stats::Scalar totalCycles;
-    Stats::Formula vpc; // vector ops per cycle
-    Stats::Formula vpc_f16; // vector ops per cycle
-    Stats::Formula vpc_f32; // vector ops per cycle
-    Stats::Formula vpc_f64; // vector ops per cycle
-    Stats::Formula ipc; // vector instructions per cycle
-    Stats::Distribution controlFlowDivergenceDist;
-    Stats::Distribution activeLanesPerGMemInstrDist;
-    Stats::Distribution activeLanesPerLMemInstrDist;
-    // number of vector ALU instructions received
-    Stats::Formula numALUInstsExecuted;
-    // number of times a WG can not start due to lack of free VGPRs in SIMDs
-    Stats::Scalar numTimesWgBlockedDueVgprAlloc;
-    // number of times a WG can not start due to lack of free SGPRs in SIMDs
-    Stats::Scalar numTimesWgBlockedDueSgprAlloc;
-    Stats::Scalar numCASOps;
-    Stats::Scalar numFailedCASOps;
-    Stats::Scalar completedWfs;
-    Stats::Scalar completedWGs;
-
-    // distrubtion in latency difference between first and last cache block
-    // arrival ticks
-    Stats::Distribution headTailLatency;
-
-    void
-    regStats() override;
-
     LdsState &
     getLds() const
     {
@@ -522,37 +476,19 @@ class ComputeUnit : public ClockedObject
     int32_t
     getRefCounter(const uint32_t dispatchId, const uint32_t wgId) const;
 
-    bool
-    sendToLds(GPUDynInstPtr gpuDynInst) __attribute__((warn_unused_result));
+    M5_NODISCARD bool sendToLds(GPUDynInstPtr gpuDynInst);
 
     typedef std::unordered_map<Addr, std::pair<int, int>> pageDataStruct;
     pageDataStruct pageAccesses;
 
-    class CUExitCallback : public Callback
-    {
-      private:
-        ComputeUnit *computeUnit;
+    void exitCallback();
 
-      public:
-        virtual ~CUExitCallback() { }
-
-        CUExitCallback(ComputeUnit *_cu)
-        {
-            computeUnit = _cu;
-        }
-
-        virtual void
-        process();
-    };
-
-    CUExitCallback *cuExitCallback;
-
-    class GMTokenPort : public TokenMasterPort
+    class GMTokenPort : public TokenRequestPort
     {
       public:
         GMTokenPort(const std::string& name, SimObject *owner,
                     PortID id = InvalidPortID)
-            : TokenMasterPort(name, owner, id)
+            : TokenRequestPort(name, owner, id)
         { }
         ~GMTokenPort() { }
 
@@ -568,19 +504,18 @@ class ComputeUnit : public ClockedObject
     GMTokenPort gmTokenPort;
 
     /** Data access Port **/
-    class DataPort : public MasterPort
+    class DataPort : public RequestPort
     {
       public:
-        DataPort(const std::string &_name, ComputeUnit *_cu, PortID _index)
-            : MasterPort(_name, _cu), computeUnit(_cu),
-              index(_index) { }
+        DataPort(const std::string &_name, ComputeUnit *_cu, PortID id)
+            : RequestPort(_name, _cu, id), computeUnit(_cu) { }
 
         bool snoopRangeSent;
 
         struct SenderState : public Packet::SenderState
         {
             GPUDynInstPtr _gpuDynInst;
-            int port_index;
+            PortID port_index;
             Packet::SenderState *saved;
 
             SenderState(GPUDynInstPtr gpuDynInst, PortID _port_index,
@@ -600,7 +535,6 @@ class ComputeUnit : public ClockedObject
 
       protected:
         ComputeUnit *computeUnit;
-        int index;
 
         virtual bool recvTimingResp(PacketPtr pkt);
         virtual Tick recvAtomic(PacketPtr pkt) { return 0; }
@@ -618,14 +552,12 @@ class ComputeUnit : public ClockedObject
     };
 
     // Scalar data cache access port
-    class ScalarDataPort : public MasterPort
+    class ScalarDataPort : public RequestPort
     {
       public:
-        ScalarDataPort(const std::string &_name, ComputeUnit *_cu,
-                       PortID _index)
-            : MasterPort(_name, _cu, _index), computeUnit(_cu), index(_index)
+        ScalarDataPort(const std::string &_name, ComputeUnit *_cu)
+            : RequestPort(_name, _cu), computeUnit(_cu)
         {
-            (void)index;
         }
 
         bool recvTimingResp(PacketPtr pkt) override;
@@ -646,11 +578,11 @@ class ComputeUnit : public ClockedObject
         class MemReqEvent : public Event
         {
           private:
-            ScalarDataPort *scalarDataPort;
+            ScalarDataPort &scalarDataPort;
             PacketPtr pkt;
 
           public:
-            MemReqEvent(ScalarDataPort *_scalar_data_port, PacketPtr _pkt)
+            MemReqEvent(ScalarDataPort &_scalar_data_port, PacketPtr _pkt)
                 : Event(), scalarDataPort(_scalar_data_port), pkt(_pkt)
             {
               setFlags(Event::AutoDelete);
@@ -664,16 +596,14 @@ class ComputeUnit : public ClockedObject
 
       private:
         ComputeUnit *computeUnit;
-        PortID index;
     };
 
     // Instruction cache access port
-    class SQCPort : public MasterPort
+    class SQCPort : public RequestPort
     {
       public:
-        SQCPort(const std::string &_name, ComputeUnit *_cu, PortID _index)
-            : MasterPort(_name, _cu), computeUnit(_cu),
-              index(_index) { }
+        SQCPort(const std::string &_name, ComputeUnit *_cu)
+            : RequestPort(_name, _cu), computeUnit(_cu) { }
 
         bool snoopRangeSent;
 
@@ -694,7 +624,6 @@ class ComputeUnit : public ClockedObject
 
       protected:
         ComputeUnit *computeUnit;
-        int index;
 
         virtual bool recvTimingResp(PacketPtr pkt);
         virtual Tick recvAtomic(PacketPtr pkt) { return 0; }
@@ -711,12 +640,12 @@ class ComputeUnit : public ClockedObject
      };
 
     /** Data TLB port **/
-    class DTLBPort : public MasterPort
+    class DTLBPort : public RequestPort
     {
       public:
-        DTLBPort(const std::string &_name, ComputeUnit *_cu, PortID _index)
-            : MasterPort(_name, _cu), computeUnit(_cu),
-              index(_index), stalled(false)
+        DTLBPort(const std::string &_name, ComputeUnit *_cu, PortID id)
+            : RequestPort(_name, _cu, id), computeUnit(_cu),
+              stalled(false)
         { }
 
         bool isStalled() { return stalled; }
@@ -739,7 +668,7 @@ class ComputeUnit : public ClockedObject
 
             // the lane in the memInst this is associated with, so we send
             // the memory request down the right port
-            int portIndex;
+            PortID portIndex;
 
             // constructor used for packets involved in timing accesses
             SenderState(GPUDynInstPtr gpuDynInst, PortID port_index)
@@ -749,7 +678,6 @@ class ComputeUnit : public ClockedObject
 
       protected:
         ComputeUnit *computeUnit;
-        int index;
         bool stalled;
 
         virtual bool recvTimingResp(PacketPtr pkt);
@@ -759,11 +687,11 @@ class ComputeUnit : public ClockedObject
         virtual void recvReqRetry();
     };
 
-    class ScalarDTLBPort : public MasterPort
+    class ScalarDTLBPort : public RequestPort
     {
       public:
         ScalarDTLBPort(const std::string &_name, ComputeUnit *_cu)
-            : MasterPort(_name, _cu), computeUnit(_cu), stalled(false)
+            : RequestPort(_name, _cu), computeUnit(_cu), stalled(false)
         {
         }
 
@@ -787,11 +715,11 @@ class ComputeUnit : public ClockedObject
         bool stalled;
     };
 
-    class ITLBPort : public MasterPort
+    class ITLBPort : public RequestPort
     {
       public:
         ITLBPort(const std::string &_name, ComputeUnit *_cu)
-            : MasterPort(_name, _cu), computeUnit(_cu), stalled(false) { }
+            : RequestPort(_name, _cu), computeUnit(_cu), stalled(false) { }
 
 
         bool isStalled() { return stalled; }
@@ -829,11 +757,11 @@ class ComputeUnit : public ClockedObject
     /**
      * the port intended to communicate between the CU and its LDS
      */
-    class LDSPort : public MasterPort
+    class LDSPort : public RequestPort
     {
       public:
-        LDSPort(const std::string &_name, ComputeUnit *_cu, PortID _id)
-        : MasterPort(_name, _cu, _id), computeUnit(_cu)
+        LDSPort(const std::string &_name, ComputeUnit *_cu)
+        : RequestPort(_name, _cu), computeUnit(_cu)
         {
         }
 
@@ -902,13 +830,7 @@ class ComputeUnit : public ClockedObject
     /** The port to access the Local Data Store
      *  Can be connected to a LDS object
      */
-    LDSPort *ldsPort = nullptr;
-
-    LDSPort *
-    getLdsPort() const
-    {
-        return ldsPort;
-    }
+    LDSPort ldsPort;
 
     TokenManager *
     getTokenManager()
@@ -919,54 +841,39 @@ class ComputeUnit : public ClockedObject
     /** The memory port for SIMD data accesses.
      *  Can be connected to PhysMem for Ruby for timing simulations
      */
-    std::vector<DataPort*> memPort;
+    std::vector<DataPort> memPort;
     // port to the TLB hierarchy (i.e., the L1 TLB)
-    std::vector<DTLBPort*> tlbPort;
+    std::vector<DTLBPort> tlbPort;
     // port to the scalar data cache
-    ScalarDataPort *scalarDataPort;
+    ScalarDataPort scalarDataPort;
     // port to the scalar data TLB
-    ScalarDTLBPort *scalarDTLBPort;
+    ScalarDTLBPort scalarDTLBPort;
     // port to the SQC (i.e. the I-cache)
-    SQCPort *sqcPort;
+    SQCPort sqcPort;
     // port to the SQC TLB (there's a separate TLB for each I-cache)
-    ITLBPort *sqcTLBPort;
+    ITLBPort sqcTLBPort;
 
     Port &
     getPort(const std::string &if_name, PortID idx) override
     {
-        if (if_name == "memory_port") {
-            memPort[idx] = new DataPort(csprintf("%s-port%d", name(), idx),
-                                        this, idx);
-            return *memPort[idx];
-        } else if (if_name == "translation_port") {
-            tlbPort[idx] = new DTLBPort(csprintf("%s-port%d", name(), idx),
-                                        this, idx);
-            return *tlbPort[idx];
+        if (if_name == "memory_port" && idx < memPort.size()) {
+            return memPort[idx];
+        } else if (if_name == "translation_port" && idx < tlbPort.size()) {
+            return tlbPort[idx];
         } else if (if_name == "scalar_port") {
-            scalarDataPort = new ScalarDataPort(csprintf("%s-port%d", name(),
-                                                idx), this, idx);
-            return *scalarDataPort;
+            return scalarDataPort;
         } else if (if_name == "scalar_tlb_port") {
-            scalarDTLBPort = new ScalarDTLBPort(csprintf("%s-port", name()),
-                                                this);
-            return *scalarDTLBPort;
+            return scalarDTLBPort;
         } else if (if_name == "sqc_port") {
-            sqcPort = new SQCPort(csprintf("%s-port%d", name(), idx),
-                                  this, idx);
-            return *sqcPort;
+            return sqcPort;
         } else if (if_name == "sqc_tlb_port") {
-            sqcTLBPort = new ITLBPort(csprintf("%s-port", name()), this);
-            return *sqcTLBPort;
+            return sqcTLBPort;
         } else if (if_name == "ldsPort") {
-            if (ldsPort) {
-                fatal("an LDS port was already allocated");
-            }
-            ldsPort = new LDSPort(csprintf("%s-port", name()), this, idx);
-            return *ldsPort;
+            return ldsPort;
         } else if (if_name == "gmTokenPort") {
             return gmTokenPort;
         } else {
-            panic("incorrect port name");
+            return ClockedObject::getPort(if_name, idx);
         }
     }
 
@@ -974,14 +881,211 @@ class ComputeUnit : public ClockedObject
 
   private:
     const int _cacheLineSize;
+    const int _numBarrierSlots;
     int cacheLineBits;
     InstSeqNum globalSeqNum;
     int wavefrontSize;
 
+    /**
+     * TODO: Update these comments once the pipe stage interface has
+     *       been fully refactored.
+     *
+     * Pipeline stage interfaces.
+     *
+     * Buffers used to communicate between various pipeline stages
+     * List of waves which will be dispatched to
+     * each execution resource. An EXREADY implies
+     * dispatch list is non-empty and
+     * execution unit has something to execute
+     * this cycle. Currently, the dispatch list of
+     * an execution resource can hold only one wave because
+     * an execution resource can execute only one wave in a cycle.
+     * dispatchList is used to communicate between schedule
+     * and exec stage
+     *
+     * At a high level, the following intra-/inter-stage communication occurs:
+     * SCB to SCH: readyList provides per exec resource list of waves that
+     *             passed dependency and readiness checks. If selected by
+     *             scheduler, attempt to add wave to schList conditional on
+     *             RF support.
+     * SCH: schList holds waves that are gathering operands or waiting
+     *      for execution resource availability. Once ready, waves are
+     *      placed on the dispatchList as candidates for execution. A wave
+     *      may spend multiple cycles in SCH stage, on the schList due to
+     *      RF access conflicts or execution resource contention.
+     * SCH to EX: dispatchList holds waves that are ready to be executed.
+     *            LM/FLAT arbitration may remove an LM wave and place it
+     *            back on the schList. RF model may also force a wave back
+     *            to the schList if using the detailed model.
+     */
+    ScoreboardCheckToSchedule scoreboardCheckToSchedule;
+    ScheduleToExecute scheduleToExecute;
+
+    /**
+     * The barrier slots for this CU.
+     */
+    std::vector<WFBarrier> wfBarrierSlots;
+    /**
+     * A set used to easily retrieve a free barrier ID.
+     */
+    std::unordered_set<int> freeBarrierIds;
+
     // hold the time of the arrival of the first cache block related to
     // a particular GPUDynInst. This is used to calculate the difference
     // between the first and last chace block arrival times.
-    std::map<GPUDynInstPtr, Tick> headTailMap;
+    std::unordered_map<GPUDynInstPtr, Tick> headTailMap;
+
+  public:
+    void updateInstStats(GPUDynInstPtr gpuDynInst);
+    int activeWaves;
+
+    struct ComputeUnitStats : public Stats::Group
+    {
+        ComputeUnitStats(Stats::Group *parent, int n_wf);
+
+        Stats::Scalar vALUInsts;
+        Stats::Formula vALUInstsPerWF;
+        Stats::Scalar sALUInsts;
+        Stats::Formula sALUInstsPerWF;
+        Stats::Scalar instCyclesVALU;
+        Stats::Scalar instCyclesSALU;
+        Stats::Scalar threadCyclesVALU;
+        Stats::Formula vALUUtilization;
+        Stats::Scalar ldsNoFlatInsts;
+        Stats::Formula ldsNoFlatInstsPerWF;
+        Stats::Scalar flatVMemInsts;
+        Stats::Formula flatVMemInstsPerWF;
+        Stats::Scalar flatLDSInsts;
+        Stats::Formula flatLDSInstsPerWF;
+        Stats::Scalar vectorMemWrites;
+        Stats::Formula vectorMemWritesPerWF;
+        Stats::Scalar vectorMemReads;
+        Stats::Formula vectorMemReadsPerWF;
+        Stats::Scalar scalarMemWrites;
+        Stats::Formula scalarMemWritesPerWF;
+        Stats::Scalar scalarMemReads;
+        Stats::Formula scalarMemReadsPerWF;
+
+        Stats::Formula vectorMemReadsPerKiloInst;
+        Stats::Formula vectorMemWritesPerKiloInst;
+        Stats::Formula vectorMemInstsPerKiloInst;
+        Stats::Formula scalarMemReadsPerKiloInst;
+        Stats::Formula scalarMemWritesPerKiloInst;
+        Stats::Formula scalarMemInstsPerKiloInst;
+
+        // Cycles required to send register source (addr and data) from
+        // register files to memory pipeline, per SIMD.
+        Stats::Vector instCyclesVMemPerSimd;
+        Stats::Vector instCyclesScMemPerSimd;
+        Stats::Vector instCyclesLdsPerSimd;
+
+        Stats::Scalar globalReads;
+        Stats::Scalar globalWrites;
+        Stats::Formula globalMemInsts;
+        Stats::Scalar argReads;
+        Stats::Scalar argWrites;
+        Stats::Formula argMemInsts;
+        Stats::Scalar spillReads;
+        Stats::Scalar spillWrites;
+        Stats::Formula spillMemInsts;
+        Stats::Scalar groupReads;
+        Stats::Scalar groupWrites;
+        Stats::Formula groupMemInsts;
+        Stats::Scalar privReads;
+        Stats::Scalar privWrites;
+        Stats::Formula privMemInsts;
+        Stats::Scalar readonlyReads;
+        Stats::Scalar readonlyWrites;
+        Stats::Formula readonlyMemInsts;
+        Stats::Scalar kernargReads;
+        Stats::Scalar kernargWrites;
+        Stats::Formula kernargMemInsts;
+
+        Stats::Distribution waveLevelParallelism;
+
+        // the following stats compute the avg. TLB accesslatency per
+        // uncoalesced request (only for data)
+        Stats::Scalar tlbRequests;
+        Stats::Scalar tlbCycles;
+        Stats::Formula tlbLatency;
+        // hitsPerTLBLevel[x] are the hits in Level x TLB.
+        // x = 0 is the page table.
+        Stats::Vector hitsPerTLBLevel;
+
+        Stats::Scalar ldsBankAccesses;
+        Stats::Distribution ldsBankConflictDist;
+
+        // over all memory instructions executed over all wavefronts
+        // how many touched 0-4 pages, 4-8, ..., 60-64 pages
+        Stats::Distribution pageDivergenceDist;
+        // count of non-flat global memory vector instructions executed
+        Stats::Scalar dynamicGMemInstrCnt;
+        // count of flat global memory vector instructions executed
+        Stats::Scalar dynamicFlatMemInstrCnt;
+        Stats::Scalar dynamicLMemInstrCnt;
+
+        Stats::Scalar wgBlockedDueBarrierAllocation;
+        Stats::Scalar wgBlockedDueLdsAllocation;
+        // Number of instructions executed, i.e. if 64 (or 32 or 7) lanes are
+        // active when the instruction is committed, this number is still
+        // incremented by 1
+        Stats::Scalar numInstrExecuted;
+        // Number of cycles among successive instruction executions across all
+        // wavefronts of the same CU
+        Stats::Distribution execRateDist;
+        // number of individual vector operations executed
+        Stats::Scalar numVecOpsExecuted;
+        // number of individual f16 vector operations executed
+        Stats::Scalar numVecOpsExecutedF16;
+        // number of individual f32 vector operations executed
+        Stats::Scalar numVecOpsExecutedF32;
+        // number of individual f64 vector operations executed
+        Stats::Scalar numVecOpsExecutedF64;
+        // number of individual FMA 16,32,64 vector operations executed
+        Stats::Scalar numVecOpsExecutedFMA16;
+        Stats::Scalar numVecOpsExecutedFMA32;
+        Stats::Scalar numVecOpsExecutedFMA64;
+        // number of individual MAC 16,32,64 vector operations executed
+        Stats::Scalar numVecOpsExecutedMAC16;
+        Stats::Scalar numVecOpsExecutedMAC32;
+        Stats::Scalar numVecOpsExecutedMAC64;
+        // number of individual MAD 16,32,64 vector operations executed
+        Stats::Scalar numVecOpsExecutedMAD16;
+        Stats::Scalar numVecOpsExecutedMAD32;
+        Stats::Scalar numVecOpsExecutedMAD64;
+        // total number of two op FP vector operations executed
+        Stats::Scalar numVecOpsExecutedTwoOpFP;
+        // Total cycles that something is running on the GPU
+        Stats::Scalar totalCycles;
+        Stats::Formula vpc; // vector ops per cycle
+        Stats::Formula vpc_f16; // vector ops per cycle
+        Stats::Formula vpc_f32; // vector ops per cycle
+        Stats::Formula vpc_f64; // vector ops per cycle
+        Stats::Formula ipc; // vector instructions per cycle
+        Stats::Distribution controlFlowDivergenceDist;
+        Stats::Distribution activeLanesPerGMemInstrDist;
+        Stats::Distribution activeLanesPerLMemInstrDist;
+        // number of vector ALU instructions received
+        Stats::Formula numALUInstsExecuted;
+        // number of times a WG cannot start due to lack of free VGPRs in SIMDs
+        Stats::Scalar numTimesWgBlockedDueVgprAlloc;
+        // number of times a WG cannot start due to lack of free SGPRs in SIMDs
+        Stats::Scalar numTimesWgBlockedDueSgprAlloc;
+        Stats::Scalar numCASOps;
+        Stats::Scalar numFailedCASOps;
+        Stats::Scalar completedWfs;
+        Stats::Scalar completedWGs;
+
+        // distrubtion in latency difference between first and last cache block
+        // arrival ticks
+        Stats::Distribution headTailLatency;
+
+        // Track the amount of interleaving between wavefronts on each SIMD.
+        // This stat is sampled using instExecPerSimd to compute the number
+        // of instructions that have been executed on a SIMD between a WF
+        // executing two successive instructions.
+        Stats::VectorDistribution instInterleave;
+    } stats;
 };
 
 #endif // __COMPUTE_UNIT_HH__

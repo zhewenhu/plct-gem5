@@ -41,7 +41,6 @@
 
 #include "arch/generic/tlb.hh"
 #include "arch/isa.hh"
-#include "arch/isa_traits.hh"
 #include "arch/x86/pagetable.hh"
 #include "arch/x86/regs/segment.hh"
 #include "base/logging.hh"
@@ -67,7 +66,7 @@ class TLBCoalescer : public ClockedObject
 {
   public:
     typedef TLBCoalescerParams Params;
-    TLBCoalescer(const Params *p);
+    TLBCoalescer(const Params &p);
     ~TLBCoalescer() { }
 
     // Number of TLB probes per cycle. Parameterizable - default 2.
@@ -116,33 +115,15 @@ class TLBCoalescer : public ClockedObject
 
     CoalescingTable issuedTranslationsTable;
 
-    // number of packets the coalescer receives
-    Stats::Scalar uncoalescedAccesses;
-    // number packets the coalescer send to the TLB
-    Stats::Scalar coalescedAccesses;
-
-    // Number of cycles the coalesced requests spend waiting in
-    // coalescerFIFO. For each packet the coalescer receives we take into
-    // account the number of all uncoalesced requests this pkt "represents"
-    Stats::Scalar queuingCycles;
-
-    // On average how much time a request from the
-    // uncoalescedAccesses that reaches the TLB
-    // spends waiting?
-    Stats::Scalar localqueuingCycles;
-    // localqueuingCycles/uncoalescedAccesses
-    Stats::Formula localLatency;
-
     bool canCoalesce(PacketPtr pkt1, PacketPtr pkt2);
     void updatePhysAddresses(PacketPtr pkt);
-    void regStats() override;
 
-    class CpuSidePort : public SlavePort
+    class CpuSidePort : public ResponsePort
     {
       public:
         CpuSidePort(const std::string &_name, TLBCoalescer *tlb_coalescer,
                     PortID _index)
-            : SlavePort(_name, tlb_coalescer), coalescer(tlb_coalescer),
+            : ResponsePort(_name, tlb_coalescer), coalescer(tlb_coalescer),
               index(_index) { }
 
       protected:
@@ -165,12 +146,12 @@ class TLBCoalescer : public ClockedObject
         virtual AddrRangeList getAddrRanges() const;
     };
 
-    class MemSidePort : public MasterPort
+    class MemSidePort : public RequestPort
     {
       public:
         MemSidePort(const std::string &_name, TLBCoalescer *tlb_coalescer,
                     PortID _index)
-            : MasterPort(_name, tlb_coalescer), coalescer(tlb_coalescer),
+            : RequestPort(_name, tlb_coalescer), coalescer(tlb_coalescer),
               index(_index) { }
 
         std::deque<PacketPtr> retries;
@@ -192,9 +173,9 @@ class TLBCoalescer : public ClockedObject
         }
     };
 
-    // Coalescer slave ports on the cpu Side
+    // Coalescer response ports on the cpu Side
     std::vector<CpuSidePort*> cpuSidePort;
-    // Coalescer master ports on the memory side
+    // Coalescer request ports on the memory side
     std::vector<MemSidePort*> memSidePort;
 
     Port &getPort(const std::string &if_name,
@@ -212,6 +193,29 @@ class TLBCoalescer : public ClockedObject
     // this FIFO queue keeps track of the virt. page
     // addresses that are pending cleanup
     std::queue<Addr> cleanupQueue;
+
+  protected:
+    struct TLBCoalescerStats : public Stats::Group
+    {
+        TLBCoalescerStats(Stats::Group *parent);
+
+        // number of packets the coalescer receives
+        Stats::Scalar uncoalescedAccesses;
+        // number packets the coalescer send to the TLB
+        Stats::Scalar coalescedAccesses;
+
+        // Number of cycles the coalesced requests spend waiting in
+        // coalescerFIFO. For each packet the coalescer receives we take into
+        // account the number of all uncoalesced requests this pkt "represents"
+        Stats::Scalar queuingCycles;
+
+        // On average how much time a request from the
+        // uncoalescedAccesses that reaches the TLB
+        // spends waiting?
+        Stats::Scalar localqueuingCycles;
+        // localqueuingCycles/uncoalescedAccesses
+        Stats::Formula localLatency;
+    } stats;
 };
 
 #endif // __TLB_COALESCER_HH__

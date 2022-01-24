@@ -288,12 +288,12 @@ X86ISA::Interrupts::setThreadContext(ThreadContext *_tc)
 void
 X86ISA::Interrupts::init()
 {
-    panic_if(!intMasterPort.isConnected(),
+    panic_if(!intRequestPort.isConnected(),
             "Int port not connected to anything!");
     panic_if(!pioPort.isConnected(),
             "Pio port of %s not connected to anything!", name());
 
-    intSlavePort.sendRangeChange();
+    intResponsePort.sendRangeChange();
     pioPort.sendRangeChange();
 }
 
@@ -541,7 +541,7 @@ X86ISA::Interrupts::setReg(ApicRegIndex reg, uint32_t val)
             regs[APIC_INTERRUPT_COMMAND_LOW] = low;
             for (auto id: apics) {
                 PacketPtr pkt = buildIntTriggerPacket(id, message);
-                intMasterPort.sendMessage(pkt, sys->isTimingMode(),
+                intRequestPort.sendMessage(pkt, sys->isTimingMode(),
                         [this](PacketPtr pkt) { completeIPI(pkt); });
             }
             newVal = regs[APIC_INTERRUPT_COMMAND_LOW];
@@ -593,8 +593,8 @@ X86ISA::Interrupts::setReg(ApicRegIndex reg, uint32_t val)
 }
 
 
-X86ISA::Interrupts::Interrupts(Params *p)
-    : BaseInterrupts(p), sys(p->system), clockDomain(*p->clk_domain),
+X86ISA::Interrupts::Interrupts(const Params &p)
+    : BaseInterrupts(p), sys(p.system), clockDomain(*p.clk_domain),
       apicTimerEvent([this]{ processApicTimerEvent(); }, name()),
       pendingSmi(false), smiVector(0),
       pendingNmi(false), nmiVector(0),
@@ -603,9 +603,9 @@ X86ISA::Interrupts::Interrupts(Params *p)
       pendingStartup(false), startupVector(0),
       startedUp(false), pendingUnmaskableInt(false),
       pendingIPIs(0),
-      intSlavePort(name() + ".int_slave", this, this),
-      intMasterPort(name() + ".int_master", this, this, p->int_latency),
-      pioPort(this), pioDelay(p->pio_latency)
+      intResponsePort(name() + ".int_responder", this, this),
+      intRequestPort(name() + ".int_requestor", this, this, p.int_latency),
+      pioPort(this), pioDelay(p.pio_latency)
 {
     memset(regs, 0, sizeof(regs));
     //Set the local apic DFR to the flat model.
@@ -773,14 +773,9 @@ X86ISA::Interrupts::unserialize(CheckpointIn &cp)
     }
 }
 
-X86ISA::Interrupts *
-X86LocalApicParams::create()
-{
-    return new X86ISA::Interrupts(this);
-}
-
 void
-X86ISA::Interrupts::processApicTimerEvent() {
+X86ISA::Interrupts::processApicTimerEvent()
+{
     if (triggerTimerInterrupt())
         setReg(APIC_INITIAL_COUNT, readReg(APIC_INITIAL_COUNT));
 }

@@ -179,9 +179,7 @@ let {{
                 self.memFlags.append("Request::LLSC")
 
             if self.flavor in ("acquire", "acex"):
-                self.instFlags.extend(["IsMemBarrier",
-                                       "IsWriteBarrier",
-                                       "IsReadBarrier"])
+                self.instFlags.extend(["IsWriteBarrier", "IsReadBarrier"])
                 self.memFlags.append("Request::ACQUIRE")
 
             # Disambiguate the class name for different flavors of loads
@@ -208,6 +206,12 @@ let {{
             else:
                 accCode = "IWDest = cSwap(Mem%s, ((CPSR)Cpsr).e);"
             accCode = accCode % buildMemSuffix(self.sign, self.size)
+
+            if self.flavor in ('exclusive', 'acex'):
+                accCode += '''
+                SelfDebug *sd = ArmISA::ISA::getSelfDebug(xc->tcBase());
+                sd->getSstep()->setLdx();
+              '''
 
             self.codeBlobs["memacc_code"] = accCode
 
@@ -254,9 +258,7 @@ let {{
                 self.Name = "%s_%s" % (self.name.upper(), self.Name)
 
             if self.flavor in ("acquire", "acex"):
-                self.instFlags.extend(["IsMemBarrier",
-                                       "IsWriteBarrier",
-                                       "IsReadBarrier"])
+                self.instFlags.extend(["IsWriteBarrier", "IsReadBarrier"])
                 self.memFlags.append("Request::ACQUIRE")
 
         def emit(self):
@@ -284,6 +286,11 @@ let {{
                 FpDest_uw = (uint32_t)swappedMem;
                 FpDest2_uw = (uint32_t)(swappedMem >> 32);
                 '''
+            if self.flavor in ('exclusive', 'acex'):
+                accCode += '''
+                SelfDebug *sd = ArmISA::ISA::getSelfDebug(xc->tcBase());
+                sd->getSstep()->setLdx();
+             '''
 
             self.codeBlobs["memacc_code"] = accCode
 

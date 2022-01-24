@@ -62,7 +62,7 @@ let {{
 
             # Add memory request flags where necessary
             if self.user:
-                self.memFlags.append("ArmISA::TLB::UserMode")
+                self.memFlags.append("userFlag")
 
             if self.flavor in ("relexp", "exp"):
                 # For exclusive pair ops alignment check is based on total size
@@ -79,8 +79,7 @@ let {{
                 self.instFlags.append("IsMicroop")
 
             if self.flavor in ("release", "relex", "relexp"):
-                self.instFlags.extend(["IsMemBarrier",
-                                       "IsWriteBarrier",
+                self.instFlags.extend(["IsWriteBarrier",
                                        "IsReadBarrier"])
                 self.memFlags.append("Request::RELEASE")
 
@@ -99,11 +98,11 @@ let {{
             fa_code = None
             if not self.micro and self.flavor in ("normal", "release"):
                 fa_code = '''
-                    fault->annotate(ArmFault::SAS, %s);
-                    fault->annotate(ArmFault::SSE, false);
-                    fault->annotate(ArmFault::SRT, dest);
-                    fault->annotate(ArmFault::SF, %s);
-                    fault->annotate(ArmFault::AR, %s);
+                    fault->annotate(ArmISA::ArmFault::SAS, %s);
+                    fault->annotate(ArmISA::ArmFault::SSE, false);
+                    fault->annotate(ArmISA::ArmFault::SRT, dest);
+                    fault->annotate(ArmISA::ArmFault::SF, %s);
+                    fault->annotate(ArmISA::ArmFault::AR, %s);
                 ''' % ("0" if self.size == 1 else
                        "1" if self.size == 2 else
                        "2" if self.size == 4 else "3",
@@ -135,6 +134,10 @@ let {{
                 eaCode += self.offset
             eaCode += ";"
 
+            if self.user:
+                eaCode += " uint8_t userFlag = 0;\n"\
+                          "  if(isUnpriviledgeAccess(xc->tcBase()))\n"\
+                          "     userFlag = ArmISA::TLB::UserMode;"
             self.codeBlobs["ea_code"] = eaCode
 
 

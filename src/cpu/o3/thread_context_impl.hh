@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2012, 2016-2017 ARM Limited
+ * Copyright (c) 2010-2012, 2016-2017, 2019 ARM Limited
  * Copyright (c) 2013 Advanced Micro Devices, Inc.
  * All rights reserved
  *
@@ -46,7 +46,6 @@
 #include "arch/registers.hh"
 #include "config/the_isa.hh"
 #include "cpu/o3/thread_context.hh"
-#include "cpu/quiesce_event.hh"
 #include "debug/O3CPU.hh"
 
 template <class Impl>
@@ -54,13 +53,6 @@ PortProxy&
 O3ThreadContext<Impl>::getVirtProxy()
 {
     return thread->getVirtProxy();
-}
-
-template <class Impl>
-void
-O3ThreadContext<Impl>::dumpFuncProfile()
-{
-    thread->dumpFuncProfile();
 }
 
 template <class Impl>
@@ -152,20 +144,6 @@ Tick
 O3ThreadContext<Impl>::readLastSuspend()
 {
     return thread->lastSuspend;
-}
-
-template <class Impl>
-void
-O3ThreadContext<Impl>::profileClear()
-{
-    thread->profileClear();
-}
-
-template <class Impl>
-void
-O3ThreadContext<Impl>::profileSample()
-{
-    thread->profileSample();
 }
 
 template <class Impl>
@@ -269,7 +247,7 @@ O3ThreadContext<Impl>::setFloatRegFlat(RegIndex reg_idx, RegVal val)
 template <class Impl>
 void
 O3ThreadContext<Impl>::setVecRegFlat(
-        RegIndex reg_idx, const VecRegContainer& val)
+        RegIndex reg_idx, const TheISA::VecRegContainer& val)
 {
     cpu->setArchVecReg(reg_idx, val, thread->threadId());
 
@@ -279,7 +257,7 @@ O3ThreadContext<Impl>::setVecRegFlat(
 template <class Impl>
 void
 O3ThreadContext<Impl>::setVecElemFlat(RegIndex idx,
-        const ElemIndex& elemIndex, const VecElem& val)
+        const ElemIndex& elemIndex, const TheISA::VecElem& val)
 {
     cpu->setArchVecElem(idx, elemIndex, val, thread->threadId());
     conditionalSquash();
@@ -288,7 +266,7 @@ O3ThreadContext<Impl>::setVecElemFlat(RegIndex idx,
 template <class Impl>
 void
 O3ThreadContext<Impl>::setVecPredRegFlat(RegIndex reg_idx,
-                                         const VecPredRegContainer& val)
+        const TheISA::VecPredRegContainer& val)
 {
     cpu->setArchVecPredReg(reg_idx, val, thread->threadId());
 
@@ -345,6 +323,31 @@ O3ThreadContext<Impl>::setMiscReg(RegIndex misc_reg, RegVal val)
     cpu->setMiscReg(misc_reg, val, thread->threadId());
 
     conditionalSquash();
+}
+
+// hardware transactional memory
+template <class Impl>
+void
+O3ThreadContext<Impl>::htmAbortTransaction(uint64_t htmUid,
+                                           HtmFailureFaultCause cause)
+{
+    cpu->htmSendAbortSignal(thread->threadId(), htmUid, cause);
+
+    conditionalSquash();
+}
+
+template <class Impl>
+BaseHTMCheckpointPtr&
+O3ThreadContext<Impl>::getHtmCheckpointPtr()
+{
+    return thread->htmCheckpoint;
+}
+
+template <class Impl>
+void
+O3ThreadContext<Impl>::setHtmCheckpointPtr(BaseHTMCheckpointPtr new_cpt)
+{
+    thread->htmCheckpoint = std::move(new_cpt);
 }
 
 #endif //__CPU_O3_THREAD_CONTEXT_IMPL_HH__

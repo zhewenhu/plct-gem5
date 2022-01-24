@@ -40,9 +40,11 @@
 #include <utility>
 #include <vector>
 
-#include "sim/stats.hh"
+#include "base/statistics.hh"
+#include "base/stats/group.hh"
 
 class ComputeUnit;
+class ScoreboardCheckToSchedule;
 class Wavefront;
 
 struct ComputeUnitParams;
@@ -63,6 +65,7 @@ class ScoreboardCheckStage
         NRDY_WF_STOP,
         NRDY_IB_EMPTY,
         NRDY_WAIT_CNT,
+        NRDY_SLEEP,
         NRDY_BARRIER_WAIT,
         NRDY_VGPR_NRDY,
         NRDY_SGPR_NRDY,
@@ -70,30 +73,37 @@ class ScoreboardCheckStage
         NRDY_CONDITIONS
     };
 
-    ScoreboardCheckStage(const ComputeUnitParams* params);
+    ScoreboardCheckStage(const ComputeUnitParams &p, ComputeUnit &cu,
+                         ScoreboardCheckToSchedule &to_schedule);
     ~ScoreboardCheckStage();
-    void init(ComputeUnit *cu);
     void exec();
 
     // Stats related variables and methods
     const std::string& name() const { return _name; }
-    void regStats();
 
   private:
     void collectStatistics(nonrdytype_e rdyStatus);
     int mapWaveToExeUnit(Wavefront *w);
     bool ready(Wavefront *w, nonrdytype_e *rdyStatus,
                int *exeResType, int wfSlot);
-    ComputeUnit *computeUnit;
+    ComputeUnit &computeUnit;
 
-    // List of waves which are ready to be scheduled.
-    // Each execution resource has a ready list
-    std::vector<std::vector<Wavefront*>*> readyList;
+    /**
+     * Interface between scoreboard check and schedule stages. Each
+     * cycle the scoreboard check stage populates this interface with
+     * information needed by the schedule stage.
+     */
+    ScoreboardCheckToSchedule &toSchedule;
 
-    // Stats
-    Stats::Vector stallCycles;
+    const std::string _name;
 
-    std::string _name;
+  protected:
+    struct ScoreboardCheckStageStats : public Stats::Group
+    {
+        ScoreboardCheckStageStats(Stats::Group *parent);
+
+        Stats::Vector stallCycles;
+    } stats;
 };
 
 #endif // __SCOREBOARD_CHECK_STAGE_HH__

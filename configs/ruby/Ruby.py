@@ -1,4 +1,4 @@
-# Copyright (c) 2012, 2017-2018 ARM Limited
+# Copyright (c) 2012, 2017-2018, 2021 ARM Limited
 # All rights reserved.
 #
 # The license below extends only to copyright in the software and shall
@@ -36,8 +36,6 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-from __future__ import print_function
 
 import math
 import m5
@@ -130,15 +128,19 @@ def setup_memory_controllers(system, ruby, dir_cntrls, options):
         dir_ranges = []
         for r in system.mem_ranges:
             mem_type = ObjectList.mem_list.get(options.mem_type)
-            mem_ctrl = MemConfig.create_mem_ctrl(mem_type, r, index,
+            dram_intf = MemConfig.create_mem_intf(mem_type, r, index,
                 options.num_dirs, int(math.log(options.num_dirs, 2)),
                 intlv_size, options.xor_low_bit)
+            if issubclass(mem_type, DRAMInterface):
+                mem_ctrl = m5.objects.MemCtrl(dram = dram_intf)
+            else:
+                mem_ctrl = dram_intf
 
             if options.access_backing_store:
-                mem_ctrl.kvm_map=False
+                dram_intf.kvm_map=False
 
             mem_ctrls.append(mem_ctrl)
-            dir_ranges.append(mem_ctrl.range)
+            dir_ranges.append(dram_intf.range)
 
             if crossbar != None:
                 mem_ctrl.port = crossbar.master
@@ -146,8 +148,8 @@ def setup_memory_controllers(system, ruby, dir_cntrls, options):
                 mem_ctrl.port = dir_cntrl.memory
 
             # Enable low-power DRAM states if option is set
-            if issubclass(mem_type, DRAMCtrl):
-                mem_ctrl.enable_dram_powerdown = \
+            if issubclass(mem_type, DRAMInterface):
+                mem_ctrl.dram.enable_dram_powerdown = \
                         options.enable_dram_powerdown
 
         index += 1
@@ -225,11 +227,7 @@ def create_system(options, full_system, system, piobus = None, dma_ports = [],
     # Connect the cpu sequencers and the piobus
     if piobus != None:
         for cpu_seq in cpu_sequencers:
-            cpu_seq.pio_master_port = piobus.slave
-            cpu_seq.mem_master_port = piobus.slave
-
-            if buildEnv['TARGET_ISA'] == "x86":
-                cpu_seq.pio_slave_port = piobus.master
+            cpu_seq.connectIOPorts(piobus)
 
     ruby.number_of_virtual_networks = ruby.network.number_of_virtual_networks
     ruby._cpu_ports = cpu_sequencers

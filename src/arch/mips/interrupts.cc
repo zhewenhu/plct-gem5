@@ -29,7 +29,6 @@
 
 #include "arch/mips/interrupts.hh"
 
-#include "arch/mips/isa_traits.hh"
 #include "arch/mips/pra_constants.hh"
 #include "base/trace.hh"
 #include "cpu/thread_context.hh"
@@ -37,6 +36,26 @@
 
 namespace MipsISA
 {
+
+enum InterruptLevels
+{
+    INTLEVEL_SOFTWARE_MIN = 4,
+    INTLEVEL_SOFTWARE_MAX = 19,
+
+    INTLEVEL_EXTERNAL_MIN = 20,
+    INTLEVEL_EXTERNAL_MAX = 34,
+
+    INTLEVEL_IRQ0 = 20,
+    INTLEVEL_IRQ1 = 21,
+    INTINDEX_ETHERNET = 0,
+    INTINDEX_SCSI = 1,
+    INTLEVEL_IRQ2 = 22,
+    INTLEVEL_IRQ3 = 23,
+
+    INTLEVEL_SERIAL = 33,
+
+    NumInterruptLevels = INTLEVEL_EXTERNAL_MAX
+};
 
 static inline uint8_t
 getCauseIP(ThreadContext *tc)
@@ -126,8 +145,8 @@ Interrupts::getInterrupt()
 {
     assert(checkInterrupts());
 
-    StatusReg M5_VAR_USED status = tc->readMiscRegNoEffect(MISCREG_STATUS);
-    CauseReg M5_VAR_USED cause = tc->readMiscRegNoEffect(MISCREG_CAUSE);
+    M5_VAR_USED StatusReg status = tc->readMiscRegNoEffect(MISCREG_STATUS);
+    M5_VAR_USED CauseReg cause = tc->readMiscRegNoEffect(MISCREG_CAUSE);
     DPRINTF(Interrupt, "Interrupt! IM[7:0]=%d IP[7:0]=%d \n",
             (unsigned)status.im, (unsigned)cause.ip);
 
@@ -164,10 +183,4 @@ Interrupts::interruptsPending() const
 
 }
 
-}
-
-MipsISA::Interrupts *
-MipsInterruptsParams::create()
-{
-    return new MipsISA::Interrupts(this);
 }

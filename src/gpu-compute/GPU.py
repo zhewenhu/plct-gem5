@@ -28,8 +28,6 @@
 # CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Steve Reinhardt
 
 from m5.defines import buildEnv
 from m5.params import *
@@ -66,6 +64,12 @@ class SimplePoolManager(PoolManager):
     type = 'SimplePoolManager'
     cxx_class = 'SimplePoolManager'
     cxx_header = "gpu-compute/simple_pool_manager.hh"
+
+## This is for allowing multiple workgroups on one CU
+class DynPoolManager(PoolManager):
+    type = 'DynPoolManager'
+    cxx_class = 'DynPoolManager'
+    cxx_header = "gpu-compute/dyn_pool_manager.hh"
 
 class RegisterFile(SimObject):
     type = 'RegisterFile'
@@ -117,6 +121,7 @@ class ComputeUnit(ClockedObject):
     # Wavefront size is 64. This is configurable, however changing
     # this value to anything other than 64 will likely cause errors.
     wf_size = Param.Int(64, 'Wavefront size (in work items)')
+    num_barrier_slots = Param.Int(4, 'Number of barrier slots in a CU')
     num_SIMDs = Param.Int(4, 'number of SIMD units per CU')
     num_scalar_cores = Param.Int(1, 'number of Scalar cores per CU')
     num_scalar_mem_pipes = Param.Int(1, 'number of Scalar memory pipelines '\
@@ -158,12 +163,14 @@ class ComputeUnit(ClockedObject):
     coalescer_to_vrf_bus_width = Param.Int(64, "Coalescer->VRF data bus "\
                                            "width  in bytes")
 
-    memory_port = VectorMasterPort("Port to the memory system")
-    translation_port = VectorMasterPort('Port to the TLB hierarchy')
-    sqc_port = MasterPort("Port to the SQC (I-cache")
-    sqc_tlb_port = MasterPort("Port to the TLB for the SQC (I-cache)")
-    scalar_port = MasterPort("Port to the scalar data cache")
-    scalar_tlb_port = MasterPort("Port to the TLB for the scalar data cache")
+    memory_port = VectorRequestPort("Port to the memory system")
+    translation_port = VectorRequestPort('Port to the TLB hierarchy')
+    sqc_port = RequestPort("Port to the SQC (I-cache")
+    sqc_tlb_port = RequestPort("Port to the TLB for the SQC (I-cache)")
+    scalar_port = RequestPort("Port to the scalar data cache")
+    scalar_tlb_port = RequestPort("Port to the TLB for the scalar data cache")
+    gmTokenPort = RequestPort("Port to the GPU coalesecer for sharing tokens")
+
     perLaneTLB = Param.Bool(False, "enable per-lane TLB")
     prefetch_depth = Param.Int(0, "Number of prefetches triggered at a time"\
                                "(0 turns off prefetching)")
@@ -191,7 +198,7 @@ class ComputeUnit(ClockedObject):
     max_cu_tokens = Param.Int(4, "Maximum number of tokens, i.e., the number"\
                             " of instructions that can be sent to coalescer")
     ldsBus = Bridge() # the bridge between the CU and its LDS
-    ldsPort = MasterPort("The port that goes to the LDS")
+    ldsPort = RequestPort("The port that goes to the LDS")
     localDataStore = Param.LdsState("the LDS for this CU")
 
     vector_register_file = VectorParam.VectorRegisterFile("Vector register "\

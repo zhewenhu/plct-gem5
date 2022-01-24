@@ -29,8 +29,6 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: John Kalamatianos
  */
 
 #ifndef __GPU_COMPUTE_SCALAR_MEMORY_PIPELINE_HH__
@@ -59,8 +57,7 @@ class ComputeUnit;
 class ScalarMemPipeline
 {
   public:
-    ScalarMemPipeline(const ComputeUnitParams *params);
-    void init(ComputeUnit *cu);
+    ScalarMemPipeline(const ComputeUnitParams &p, ComputeUnit &cu);
     void exec();
 
     std::queue<GPUDynInstPtr> &getGMReqFIFO() { return issuedRequests; }
@@ -85,12 +82,11 @@ class ScalarMemPipeline
         return (issuedRequests.size() + pendReqs) < queueSize;
     }
 
-    const std::string &name() const { return _name; }
-    void regStats();
+    const std::string& name() const { return _name; }
 
   private:
-    ComputeUnit *computeUnit;
-    std::string _name;
+    ComputeUnit &computeUnit;
+    const std::string _name;
     int queueSize;
 
     // Counters to track and limit the inflight scalar loads and stores

@@ -45,34 +45,13 @@
 
 class ThreadContext;
 
-#include "arch/pseudo_inst.hh"
-#include "arch/utility.hh"
+#include "base/bitfield.hh"
+#include "base/logging.hh"
+#include "base/trace.hh"
 #include "base/types.hh" // For Tick and Addr data types.
+#include "cpu/thread_context.hh"
 #include "debug/PseudoInst.hh"
 #include "sim/guest_abi.hh"
-
-struct PseudoInstABI
-{
-    using State = int;
-};
-
-namespace GuestABI
-{
-
-template <>
-struct Argument<PseudoInstABI, uint64_t>
-{
-    static uint64_t
-    get(ThreadContext *tc, PseudoInstABI::State &state)
-    {
-        uint64_t result =
-            TheISA::getArgument(tc, state, sizeof(uint64_t), false);
-        state++;
-        return result;
-    }
-};
-
-} // namespace GuestABI
 
 namespace PseudoInst
 {
@@ -100,6 +79,8 @@ uint64_t rpns(ThreadContext *tc);
 void wakeCPU(ThreadContext *tc, uint64_t cpuid);
 void m5exit(ThreadContext *tc, Tick delay);
 void m5fail(ThreadContext *tc, Tick delay, uint64_t code);
+uint64_t m5sum(ThreadContext *tc, uint64_t a, uint64_t b, uint64_t c,
+                                  uint64_t d, uint64_t e, uint64_t f);
 void resetstats(ThreadContext *tc, Tick delay, Tick period);
 void dumpstats(ThreadContext *tc, Tick delay, Tick period);
 void dumpresetstats(ThreadContext *tc, Tick delay, Tick period);
@@ -110,6 +91,7 @@ void workbegin(ThreadContext *tc, uint64_t workid, uint64_t threadid);
 void workend(ThreadContext *tc, uint64_t workid, uint64_t threadid);
 void m5Syscall(ThreadContext *tc);
 void togglesync(ThreadContext *tc);
+void triggerWorkloadEvent(ThreadContext *tc);
 
 /**
  * Execute a decoded M5 pseudo instruction
@@ -167,6 +149,11 @@ pseudoInstWork(ThreadContext *tc, uint8_t func, uint64_t &result)
 
       case M5OP_FAIL:
         invokeSimcall<ABI>(tc, m5fail);
+        return true;
+
+      // M5OP_SUM is for sanity checking the gem5 op interface.
+      case M5OP_SUM:
+        result = invokeSimcall<ABI, store_ret>(tc, m5sum);
         return true;
 
       case M5OP_INIT_PARAM:
@@ -232,18 +219,13 @@ pseudoInstWork(ThreadContext *tc, uint8_t func, uint64_t &result)
         warn("Unimplemented m5 op (%#x)\n", func);
         return false;
 
-      /* SE mode functions */
-      case M5OP_SE_SYSCALL:
-        invokeSimcall<ABI>(tc, m5Syscall);
-        return true;
-
-      case M5OP_SE_PAGE_FAULT:
-        invokeSimcall<ABI>(tc, TheISA::m5PageFault);
-        return true;
-
       /* dist-gem5 functions */
       case M5OP_DIST_TOGGLE_SYNC:
         invokeSimcall<ABI>(tc, togglesync);
+        return true;
+
+      case M5OP_WORKLOAD:
+        invokeSimcall<ABI>(tc, triggerWorkloadEvent);
         return true;
 
       default:

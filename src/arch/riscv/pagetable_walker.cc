@@ -396,7 +396,7 @@ Walker::WalkerState::stepWalk(PacketPtr &write)
     else {
         //If we didn't return, we're setting up another read.
         RequestPtr request = std::make_shared<Request>(
-            nextRead, oldRead->getSize(), flags, walker->masterId);
+            nextRead, oldRead->getSize(), flags, walker->requestorId);
         read = new Packet(request, MemCmd::ReadReq);
         read->allocate();
 
@@ -435,7 +435,7 @@ Walker::WalkerState::setupWalk(Addr vaddr)
 
     Request::Flags flags = Request::PHYSICAL;
     RequestPtr request = std::make_shared<Request>(
-        topAddr, sizeof(PTESv39), flags, walker->masterId);
+        topAddr, sizeof(PTESv39), flags, walker->requestorId);
 
     read = new Packet(request, MemCmd::ReadReq);
     read->allocate();
@@ -489,6 +489,7 @@ Walker::WalkerState::recvPacket(PacketPtr pkt)
             vaddr &= (static_cast<Addr>(1) << VADDR_BITS) - 1;
             Addr paddr = walker->tlb->translateWithTLB(vaddr, satp.asid, mode);
             req->setPaddr(paddr);
+            walker->pma->check(req);
             // Let the CPU continue.
             translation->finish(NoFault, req, tc, mode);
         } else {
@@ -579,9 +580,3 @@ Walker::WalkerState::pageFault(bool present)
 }
 
 } /* end namespace RiscvISA */
-
-RiscvISA::Walker *
-RiscvPagetableWalkerParams::create()
-{
-    return new RiscvISA::Walker(this);
-}

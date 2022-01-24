@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2013, 2015-2018 ARM Limited
+ * Copyright (c) 2010, 2013, 2015-2018, 2020 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -59,20 +59,20 @@ const AddrRange GicV2::GICD_IPRIORITYR(0x400, 0x800);
 const AddrRange GicV2::GICD_ITARGETSR (0x800, 0xc00);
 const AddrRange GicV2::GICD_ICFGR     (0xc00, 0xd00);
 
-GicV2::GicV2(const Params *p)
+GicV2::GicV2(const Params &p)
     : BaseGic(p),
-      gicdPIDR(p->gicd_pidr),
-      gicdIIDR(p->gicd_iidr),
-      giccIIDR(p->gicc_iidr),
-      distRange(RangeSize(p->dist_addr, DIST_SIZE)),
-      cpuRange(RangeSize(p->cpu_addr, p->cpu_size)),
+      gicdPIDR(p.gicd_pidr),
+      gicdIIDR(p.gicd_iidr),
+      giccIIDR(p.gicc_iidr),
+      distRange(RangeSize(p.dist_addr, DIST_SIZE)),
+      cpuRange(RangeSize(p.cpu_addr, p.cpu_size)),
       addrRanges{distRange, cpuRange},
-      distPioDelay(p->dist_pio_delay),
-      cpuPioDelay(p->cpu_pio_delay), intLatency(p->int_latency),
-      enabled(false), haveGem5Extensions(p->gem5_extensions),
-      itLines(p->it_lines),
+      distPioDelay(p.dist_pio_delay),
+      cpuPioDelay(p.cpu_pio_delay), intLatency(p.int_latency),
+      enabled(false), haveGem5Extensions(p.gem5_extensions),
+      itLines(p.it_lines),
       intEnabled {}, pendingInt {}, activeInt {},
-      intPriority {}, cpuTarget {}, intConfig {},
+      intPriority {}, intConfig {}, cpuTarget {},
       cpuSgiPending {}, cpuSgiActive {},
       cpuSgiPendingExt {}, cpuSgiActiveExt {},
       cpuPpiPending {}, cpuPpiActive {},
@@ -250,10 +250,7 @@ GicV2::readDistributor(ContextID ctx, Addr daddr, size_t resp_sz)
 
     if (GICD_ICFGR.contains(daddr)) {
         uint32_t ix = (daddr - GICD_ICFGR.start()) >> 2;
-        assert(ix < 64);
-        /** @todo software generated interrupts and PPIs
-         * can't be configured in some ways */
-        return intConfig[ix];
+        return getIntConfig(ctx, ix);
     }
 
     switch(daddr) {
@@ -346,7 +343,9 @@ GicV2::readCpu(ContextID ctx, Addr daddr)
                 uint32_t int_num = 1 << (cpuHighestInt[ctx] - SGI_MAX);
                 cpuPpiActive[ctx] |= int_num;
                 updateRunPri();
-                cpuPpiPending[ctx] &= ~int_num;
+                if (!isLevelSensitive(ctx, active_int)) {
+                    cpuPpiPending[ctx] &= ~int_num;
+                }
 
             } else {
                 uint32_t int_num = 1 << intNumToBit(cpuHighestInt[ctx]);
@@ -390,7 +389,7 @@ GicV2::writeDistributor(PacketPtr pkt)
     const ContextID ctx = pkt->req->contextId();
     const size_t data_sz = pkt->getSize();
 
-    uint32_t pkt_data M5_VAR_USED;
+    M5_VAR_USED uint32_t pkt_data;
     switch (data_sz)
     {
       case 1:
@@ -521,8 +520,10 @@ GicV2::writeDistributor(ContextID ctx, Addr daddr, uint32_t data,
 
     if (GICD_ICFGR.contains(daddr)) {
         uint32_t ix = (daddr - GICD_ICFGR.start()) >> 2;
-        assert(ix < INT_BITS_MAX*2);
-        intConfig[ix] = data;
+        // Since the GICD_ICFGR0 is RO (WI), we are discarding the write
+        // if ix = 0
+        if (ix != 0)
+            getIntConfig(ctx, ix) = data;
         if (data & NN_CONFIG_MASK)
             warn("GIC N:N mode selected and not supported at this time\n");
         return;
@@ -901,10 +902,16 @@ GicV2::clearInt(uint32_t num)
 void
 GicV2::clearPPInt(uint32_t num, uint32_t cpu)
 {
-    DPRINTF(Interrupt, "Clearing PPI %d, cpuTarget %#x: \n",
-            num, cpu);
-    cpuPpiPending[cpu] &= ~(1 << (num - SGI_MAX));
-    updateIntState(intNumToWord(num));
+    if (isLevelSensitive(cpu, num)) {
+        DPRINTF(Interrupt, "Clearing PPI %d, cpuTarget %#x: \n",
+                num, cpu);
+        cpuPpiPending[cpu] &= ~(1 << (num - SGI_MAX));
+        updateIntState(intNumToWord(num));
+    } else {
+        /* Nothing to do :
+         * Edge-triggered interrupt remain pending until software
+         * writes GICD_ICPENDR or reads GICC_IAR */
+    }
 }
 
 void
@@ -993,7 +1000,7 @@ GicV2::serialize(CheckpointOut &cp) const
     SERIALIZE_ARRAY(iccrpr, CPU_MAX);
     SERIALIZE_ARRAY(intPriority, GLOBAL_INT_LINES);
     SERIALIZE_ARRAY(cpuTarget, GLOBAL_INT_LINES);
-    SERIALIZE_ARRAY(intConfig, INT_BITS_MAX * 2);
+    SERIALIZE_ARRAY(intConfig, INT_BITS_MAX * 2 - 2);
     SERIALIZE_ARRAY(cpuControl, CPU_MAX);
     SERIALIZE_ARRAY(cpuPriority, CPU_MAX);
     SERIALIZE_ARRAY(cpuBpr, CPU_MAX);
@@ -1020,6 +1027,7 @@ GicV2::BankedRegs::serialize(CheckpointOut &cp) const
     SERIALIZE_SCALAR(pendingInt);
     SERIALIZE_SCALAR(activeInt);
     SERIALIZE_SCALAR(intGroup);
+    SERIALIZE_ARRAY(intConfig, 2);
     SERIALIZE_ARRAY(intPriority, SGI_MAX + PPI_MAX);
 }
 
@@ -1037,7 +1045,7 @@ GicV2::unserialize(CheckpointIn &cp)
     UNSERIALIZE_ARRAY(iccrpr, CPU_MAX);
     UNSERIALIZE_ARRAY(intPriority, GLOBAL_INT_LINES);
     UNSERIALIZE_ARRAY(cpuTarget, GLOBAL_INT_LINES);
-    UNSERIALIZE_ARRAY(intConfig, INT_BITS_MAX * 2);
+    UNSERIALIZE_ARRAY(intConfig, INT_BITS_MAX * 2 - 2);
     UNSERIALIZE_ARRAY(cpuControl, CPU_MAX);
     UNSERIALIZE_ARRAY(cpuPriority, CPU_MAX);
     UNSERIALIZE_ARRAY(cpuBpr, CPU_MAX);
@@ -1079,11 +1087,6 @@ GicV2::BankedRegs::unserialize(CheckpointIn &cp)
     UNSERIALIZE_SCALAR(pendingInt);
     UNSERIALIZE_SCALAR(activeInt);
     UNSERIALIZE_SCALAR(intGroup);
+    UNSERIALIZE_ARRAY(intConfig, 2);
     UNSERIALIZE_ARRAY(intPriority, SGI_MAX + PPI_MAX);
-}
-
-GicV2 *
-GicV2Params::create()
-{
-    return new GicV2(this);
 }

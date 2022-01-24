@@ -77,7 +77,10 @@ class TestParameters(object):
     def __init__(self, test, suite):
         self.test = test
         self.suite = suite
-        self.log = log.Log(test)
+        self.log = log.test_log
+        self.log.test = test
+        self.time = {
+            "user_time" : 0, "system_time" : 0}
 
     @helper.cacheresult
     def _fixtures(self):
@@ -127,6 +130,7 @@ class RunnerPattern:
             self.testable.status = Status.Running
             self.test()
         finally:
+            self.builder.post_test_procedure(self.testable)
             self.testable.status = Status.TearingDown
             self.builder.teardown(self.testable)
 
@@ -149,6 +153,8 @@ class TestRunner(RunnerPattern):
                     traceback.format_exc())
         else:
             self.testable.result = Result(Result.Passed)
+
+        self.testable.time = test_params.time
 
 
 class SuiteRunner(RunnerPattern):
@@ -207,6 +213,10 @@ class FixtureBuilder(object):
 
                 raise BrokenFixtureException(fixture, testitem,
                         traceback.format_exc())
+
+    def post_test_procedure(self, testitem):
+        for fixture in self.built_fixtures:
+            fixture.post_test_procedure(testitem)
 
     def teardown(self, testitem):
         for fixture in self.built_fixtures:

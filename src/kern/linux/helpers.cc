@@ -37,21 +37,20 @@
 
 #include "kern/linux/helpers.hh"
 
-#include "arch/isa_traits.hh"
 #include "config/the_isa.hh"
 #include "cpu/thread_context.hh"
 #include "mem/port_proxy.hh"
 #include "sim/byteswap.hh"
 #include "sim/system.hh"
 
-struct DmesgEntry {
+struct M5_ATTR_PACKED DmesgEntry {
     uint64_t ts_nsec;
     uint16_t len;
     uint16_t text_len;
     uint16_t dict_len;
     uint8_t facility;
     uint8_t flags;
-} M5_ATTR_PACKED;
+};
 
 static int
 dumpDmesgEntry(const uint8_t *base, const uint8_t *end, const ByteOrder bo,
@@ -109,12 +108,9 @@ Linux::dumpDmesg(ThreadContext *tc, std::ostream &os)
         return;
     }
 
-    uint32_t log_buf_len =
-        proxy.read<uint32_t>(lb_len->address, TheISA::GuestByteOrder);
-    uint32_t log_first_idx =
-        proxy.read<uint32_t>(first->address, TheISA::GuestByteOrder);
-    uint32_t log_next_idx =
-        proxy.read<uint32_t>(next->address, TheISA::GuestByteOrder);
+    uint32_t log_buf_len = proxy.read<uint32_t>(lb_len->address, bo);
+    uint32_t log_first_idx = proxy.read<uint32_t>(first->address, bo);
+    uint32_t log_next_idx = proxy.read<uint32_t>(next->address, bo);
 
     if (log_first_idx >= log_buf_len || log_next_idx >= log_buf_len) {
         warn("dmesg pointers/length corrupted\n");

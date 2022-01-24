@@ -57,11 +57,11 @@ namespace X86ISA
     {
       protected:
         // Port for accessing memory
-        class WalkerPort : public MasterPort
+        class WalkerPort : public RequestPort
         {
           public:
             WalkerPort(const std::string &_name, Walker * _walker) :
-                  MasterPort(_name, _walker), walker(_walker)
+                  RequestPort(_name, _walker), walker(_walker)
             {}
 
           protected:
@@ -168,7 +168,7 @@ namespace X86ISA
         // The TLB we're supposed to load.
         TLB * tlb;
         System * sys;
-        MasterID masterId;
+        RequestorID requestorId;
 
         // The number of outstanding walks that can be squashed per cycle.
         unsigned numSquashable;
@@ -193,19 +193,13 @@ namespace X86ISA
             tlb = _tlb;
         }
 
-        typedef X86PagetableWalkerParams Params;
+        using Params = X86PagetableWalkerParams;
 
-        const Params *
-        params() const
-        {
-            return static_cast<const Params *>(_params);
-        }
-
-        Walker(const Params *params) :
+        Walker(const Params &params) :
             ClockedObject(params), port(name() + ".port", this),
-            funcState(this, NULL, NULL, true), tlb(NULL), sys(params->system),
-            masterId(sys->getMasterId(this)),
-            numSquashable(params->num_squash_per_cycle),
+            funcState(this, NULL, NULL, true), tlb(NULL), sys(params.system),
+            requestorId(sys->getRequestorId(this)),
+            numSquashable(params.num_squash_per_cycle),
             startWalkWrapperEvent([this]{ startWalkWrapper(); }, name())
         {
         }

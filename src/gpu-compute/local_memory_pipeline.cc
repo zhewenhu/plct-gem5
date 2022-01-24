@@ -41,16 +41,10 @@
 #include "gpu-compute/vector_register_file.hh"
 #include "gpu-compute/wavefront.hh"
 
-LocalMemPipeline::LocalMemPipeline(const ComputeUnitParams* p) :
-    computeUnit(nullptr), lmQueueSize(p->local_mem_queue_size)
+LocalMemPipeline::LocalMemPipeline(const ComputeUnitParams &p, ComputeUnit &cu)
+    : computeUnit(cu), _name(cu.name() + ".LocalMemPipeline"),
+      lmQueueSize(p.local_mem_queue_size), stats(&cu)
 {
-}
-
-void
-LocalMemPipeline::init(ComputeUnit *cu)
-{
-    computeUnit = cu;
-    _name = computeUnit->name() + ".LocalMemPipeline";
 }
 
 void
@@ -72,9 +66,9 @@ LocalMemPipeline::exec()
     }
 
     if (!lmReturnedRequests.empty() && m->latency.rdy() && accessVrf &&
-        computeUnit->locMemToVrfBus.rdy()
-        && (computeUnit->shader->coissue_return
-        || computeUnit->vectorSharedMemUnit.rdy())) {
+        computeUnit.locMemToVrfBus.rdy()
+        && (computeUnit.shader->coissue_return
+        || computeUnit.vectorSharedMemUnit.rdy())) {
 
         lmReturnedRequests.pop();
         w = m->wavefront();
@@ -82,6 +76,7 @@ LocalMemPipeline::exec()
         DPRINTF(GPUMem, "CU%d: WF[%d][%d]: Completing local mem instr %s\n",
                 m->cu_id, m->simdId, m->wfSlotId, m->disassemble());
         m->completeAcc(m);
+        w->decLGKMInstsIssued();
 
         if (m->isLoad() || m->isAtomicRet()) {
             w->computeUnit->vrf[w->simdId]->
@@ -89,21 +84,21 @@ LocalMemPipeline::exec()
         }
 
         // Decrement outstanding request count
-        computeUnit->shader->ScheduleAdd(&w->outstandingReqs, m->time, -1);
+        computeUnit.shader->ScheduleAdd(&w->outstandingReqs, m->time, -1);
 
         if (m->isStore() || m->isAtomic()) {
-            computeUnit->shader->ScheduleAdd(&w->outstandingReqsWrLm,
+            computeUnit.shader->ScheduleAdd(&w->outstandingReqsWrLm,
                                              m->time, -1);
         }
 
         if (m->isLoad() || m->isAtomic()) {
-            computeUnit->shader->ScheduleAdd(&w->outstandingReqsRdLm,
+            computeUnit.shader->ScheduleAdd(&w->outstandingReqsRdLm,
                                              m->time, -1);
         }
 
         // Mark write bus busy for appropriate amount of time
-        computeUnit->locMemToVrfBus.set(m->time);
-        if (computeUnit->shader->coissue_return == 0)
+        computeUnit.locMemToVrfBus.set(m->time);
+        if (computeUnit.shader->coissue_return == 0)
             w->computeUnit->vectorSharedMemUnit.set(m->time);
     }
 
@@ -114,7 +109,7 @@ LocalMemPipeline::exec()
 
         GPUDynInstPtr m = lmIssuedRequests.front();
 
-        bool returnVal = computeUnit->sendToLds(m);
+        bool returnVal = computeUnit.sendToLds(m);
         if (!returnVal) {
             DPRINTF(GPUPort, "packet was nack'd and put in retry queue");
         }
@@ -129,12 +124,11 @@ LocalMemPipeline::issueRequest(GPUDynInstPtr gpuDynInst)
     lmIssuedRequests.push(gpuDynInst);
 }
 
-void
-LocalMemPipeline::regStats()
+
+LocalMemPipeline::
+LocalMemPipelineStats::LocalMemPipelineStats(Stats::Group *parent)
+    : Stats::Group(parent, "LocalMemPipeline"),
+      ADD_STAT(loadVrfBankConflictCycles, "total number of cycles LDS data "
+               "are delayed before updating the VRF")
 {
-    loadVrfBankConflictCycles
-        .name(name() + ".load_vrf_bank_conflict_cycles")
-        .desc("total number of cycles LDS data are delayed before updating "
-              "the VRF")
-        ;
 }

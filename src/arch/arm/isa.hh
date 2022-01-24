@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012-2020 ARM Limited
+ * Copyright (c) 2010, 2012-2021 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -44,9 +44,11 @@
 #include "arch/arm/isa_device.hh"
 #include "arch/arm/miscregs.hh"
 #include "arch/arm/registers.hh"
+#include "arch/arm/self_debug.hh"
 #include "arch/arm/system.hh"
 #include "arch/arm/tlb.hh"
 #include "arch/arm/types.hh"
+#include "arch/arm/utility.hh"
 #include "arch/generic/isa.hh"
 #include "arch/generic/traits.hh"
 #include "debug/Checkpoint.hh"
@@ -93,7 +95,10 @@ namespace ArmISA
         uint8_t physAddrRange;
         bool haveSVE;
         bool haveLSE;
+        bool haveVHE;
         bool havePAN;
+        bool haveSecEL2;
+        bool haveTME;
 
         /** SVE vector length in quadwords */
         unsigned sveVL;
@@ -105,6 +110,8 @@ namespace ArmISA
         bool impdefAsNop;
 
         bool afterStartup;
+
+        SelfDebug * selfDebug;
 
         /** MiscReg metadata **/
         struct MiscRegLUTEntry {
@@ -247,12 +254,30 @@ namespace ArmISA
                 privNonSecureRead(v);
                 return *this;
             }
+            chain hypE2HSecureRead(bool v = true) const {
+                info[MISCREG_HYP_E2H_S_RD] = v;
+                return *this;
+            }
+            chain hypE2HNonSecureRead(bool v = true) const {
+                info[MISCREG_HYP_E2H_NS_RD] = v;
+                return *this;
+            }
             chain hypE2HRead(bool v = true) const {
-                info[MISCREG_HYP_E2H_RD] = v;
+                hypE2HSecureRead(v);
+                hypE2HNonSecureRead(v);
+                return *this;
+            }
+            chain hypE2HSecureWrite(bool v = true) const {
+                info[MISCREG_HYP_E2H_S_WR] = v;
+                return *this;
+            }
+            chain hypE2HNonSecureWrite(bool v = true) const {
+                info[MISCREG_HYP_E2H_NS_WR] = v;
                 return *this;
             }
             chain hypE2HWrite(bool v = true) const {
-                info[MISCREG_HYP_E2H_WR] = v;
+                hypE2HSecureWrite(v);
+                hypE2HNonSecureWrite(v);
                 return *this;
             }
             chain hypE2H(bool v = true) const {
@@ -260,14 +285,39 @@ namespace ArmISA
                 hypE2HWrite(v);
                 return *this;
             }
+            chain hypSecureRead(bool v = true) const {
+                info[MISCREG_HYP_S_RD] = v;
+                return *this;
+            }
+            chain hypNonSecureRead(bool v = true) const {
+                info[MISCREG_HYP_NS_RD] = v;
+                return *this;
+            }
             chain hypRead(bool v = true) const {
                 hypE2HRead(v);
-                info[MISCREG_HYP_RD] = v;
+                hypSecureRead(v);
+                hypNonSecureRead(v);
+                return *this;
+            }
+            chain hypSecureWrite(bool v = true) const {
+                info[MISCREG_HYP_S_WR] = v;
+                return *this;
+            }
+            chain hypNonSecureWrite(bool v = true) const {
+                info[MISCREG_HYP_NS_WR] = v;
                 return *this;
             }
             chain hypWrite(bool v = true) const {
                 hypE2HWrite(v);
-                info[MISCREG_HYP_WR] = v;
+                hypSecureWrite(v);
+                hypNonSecureWrite(v);
+                return *this;
+            }
+            chain hypSecure(bool v = true) const {
+                hypE2HSecureRead(v);
+                hypE2HSecureWrite(v);
+                hypSecureRead(v);
+                hypSecureWrite(v);
                 return *this;
             }
             chain hyp(bool v = true) const {
@@ -456,12 +506,30 @@ namespace ArmISA
         void clear();
 
       protected:
-        void clear32(const ArmISAParams *p, const SCTLR &sctlr_rst);
-        void clear64(const ArmISAParams *p);
-        void initID32(const ArmISAParams *p);
-        void initID64(const ArmISAParams *p);
+        void clear32(const ArmISAParams &p, const SCTLR &sctlr_rst);
+        void clear64(const ArmISAParams &p);
+        void initID32(const ArmISAParams &p);
+        void initID64(const ArmISAParams &p);
+
+        void addressTranslation(TLB::ArmTranslationType tran_type,
+            BaseTLB::Mode mode, Request::Flags flags, RegVal val);
+        void addressTranslation64(TLB::ArmTranslationType tran_type,
+            BaseTLB::Mode mode, Request::Flags flags, RegVal val);
 
       public:
+        SelfDebug*
+        getSelfDebug() const
+        {
+            return selfDebug;
+        }
+
+        static SelfDebug*
+        getSelfDebug(ThreadContext *tc)
+        {
+            auto *arm_isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
+            return arm_isa->getSelfDebug();
+        }
+
         RegVal readMiscRegNoEffect(int misc_reg) const;
         RegVal readMiscReg(int misc_reg);
         void setMiscRegNoEffect(int misc_reg, RegVal val);
@@ -677,6 +745,78 @@ namespace ArmISA
             return flat_idx;
         }
 
+        /**
+         * Returns the enconcing equivalent when VHE is implemented and
+         * HCR_EL2.E2H is enabled and executing at EL2
+         */
+        int
+        redirectRegVHE(ThreadContext * tc, int misc_reg)
+        {
+            const HCR hcr = readMiscRegNoEffect(MISCREG_HCR_EL2);
+            if (hcr.e2h == 0x0 || currEL(tc) != EL2)
+                return misc_reg;
+            SCR scr = readMiscRegNoEffect(MISCREG_SCR_EL3);
+            bool sec_el2 = scr.eel2 && haveSecEL2;
+            switch(misc_reg) {
+              case MISCREG_SPSR_EL1:
+                  return MISCREG_SPSR_EL2;
+              case MISCREG_ELR_EL1:
+                  return MISCREG_ELR_EL2;
+              case MISCREG_SCTLR_EL1:
+                  return MISCREG_SCTLR_EL2;
+              case MISCREG_CPACR_EL1:
+                  return MISCREG_CPTR_EL2;
+        //      case :
+        //          return MISCREG_TRFCR_EL2;
+              case MISCREG_TTBR0_EL1:
+                  return MISCREG_TTBR0_EL2;
+              case MISCREG_TTBR1_EL1:
+                  return MISCREG_TTBR1_EL2;
+              case MISCREG_TCR_EL1:
+                  return MISCREG_TCR_EL2;
+              case MISCREG_AFSR0_EL1:
+                  return MISCREG_AFSR0_EL2;
+              case MISCREG_AFSR1_EL1:
+                  return MISCREG_AFSR1_EL2;
+              case MISCREG_ESR_EL1:
+                  return MISCREG_ESR_EL2;
+              case MISCREG_FAR_EL1:
+                  return MISCREG_FAR_EL2;
+              case MISCREG_MAIR_EL1:
+                  return MISCREG_MAIR_EL2;
+              case MISCREG_AMAIR_EL1:
+                  return MISCREG_AMAIR_EL2;
+              case MISCREG_VBAR_EL1:
+                  return MISCREG_VBAR_EL2;
+              case MISCREG_CONTEXTIDR_EL1:
+                  return MISCREG_CONTEXTIDR_EL2;
+              case MISCREG_CNTKCTL_EL1:
+                  return MISCREG_CNTHCTL_EL2;
+              case MISCREG_CNTP_TVAL_EL0:
+                  return sec_el2? MISCREG_CNTHPS_TVAL_EL2:
+                                 MISCREG_CNTHP_TVAL_EL2;
+              case MISCREG_CNTP_CTL_EL0:
+                  return sec_el2? MISCREG_CNTHPS_CTL_EL2:
+                                 MISCREG_CNTHP_CTL_EL2;
+              case MISCREG_CNTP_CVAL_EL0:
+                  return sec_el2? MISCREG_CNTHPS_CVAL_EL2:
+                                 MISCREG_CNTHP_CVAL_EL2;
+              case MISCREG_CNTV_TVAL_EL0:
+                  return sec_el2? MISCREG_CNTHVS_TVAL_EL2:
+                                 MISCREG_CNTHV_TVAL_EL2;
+              case MISCREG_CNTV_CTL_EL0:
+                  return sec_el2? MISCREG_CNTHVS_CTL_EL2:
+                                 MISCREG_CNTHV_CTL_EL2;
+              case MISCREG_CNTV_CVAL_EL0:
+                  return sec_el2? MISCREG_CNTHVS_CVAL_EL2:
+                                 MISCREG_CNTHV_CVAL_EL2;
+              default:
+                  return misc_reg;
+            }
+            /*should not be accessible */
+            return misc_reg;
+        }
+
         int
         snsBankedIndex64(MiscRegIndex reg, bool ns) const
         {
@@ -715,21 +855,8 @@ namespace ArmISA
         static void zeroSveVecRegUpperPart(VecRegContainer &vc,
                                            unsigned eCount);
 
-        void
-        serialize(CheckpointOut &cp) const override
-        {
-            DPRINTF(Checkpoint, "Serializing Arm Misc Registers\n");
-            SERIALIZE_ARRAY(miscRegs, NUM_PHYS_MISCREGS);
-        }
-
-        void
-        unserialize(CheckpointIn &cp) override
-        {
-            DPRINTF(Checkpoint, "Unserializing Arm Misc Registers\n");
-            UNSERIALIZE_ARRAY(miscRegs, NUM_PHYS_MISCREGS);
-            CPSR tmp_cpsr = miscRegs[MISCREG_CPSR];
-            updateRegMap(tmp_cpsr);
-        }
+        void serialize(CheckpointOut &cp) const override;
+        void unserialize(CheckpointIn &cp) override;
 
         void startup() override;
 
@@ -756,11 +883,22 @@ namespace ArmISA
             return _vecRegRenameMode;
         }
 
-        typedef ArmISAParams Params;
+        PARAMS(ArmISA);
 
-        const Params *params() const;
+        ISA(const Params &p);
 
-        ISA(Params *p);
+        uint64_t
+        getExecutingAsid() const override
+        {
+            return readMiscRegNoEffect(MISCREG_CONTEXTIDR);
+        }
+
+        bool
+        inUserMode() const override
+        {
+            CPSR cpsr = miscRegs[MISCREG_CPSR];
+            return ArmISA::inUserMode(cpsr);
+        }
     };
 }
 

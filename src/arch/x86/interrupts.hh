@@ -174,8 +174,8 @@ class Interrupts : public BaseInterrupts
     int initialApicId;
 
     // Ports for interrupts.
-    IntSlavePort<Interrupts> intSlavePort;
-    IntMasterPort<Interrupts> intMasterPort;
+    IntResponsePort<Interrupts> intResponsePort;
+    IntRequestPort<Interrupts> intRequestPort;
 
     // Port for memory mapped register accesses.
     PioPort<Interrupts> pioPort;
@@ -190,15 +190,9 @@ class Interrupts : public BaseInterrupts
     /*
      * Params stuff.
      */
-    typedef X86LocalApicParams Params;
+    using Params = X86LocalApicParams;
 
     void setThreadContext(ThreadContext *_tc) override;
-
-    const Params *
-    params() const
-    {
-        return dynamic_cast<const Params *>(_params);
-    }
 
     /*
      * Initialize this object by registering it with the IO APIC.
@@ -228,10 +222,10 @@ class Interrupts : public BaseInterrupts
     Port &getPort(const std::string &if_name,
                   PortID idx=InvalidPortID) override
     {
-        if (if_name == "int_master") {
-            return intMasterPort;
-        } else if (if_name == "int_slave") {
-            return intSlavePort;
+        if (if_name == "int_requestor") {
+            return intRequestPort;
+        } else if (if_name == "int_responder") {
+            return intResponsePort;
         } else if (if_name == "pio") {
             return pioPort;
         }
@@ -254,7 +248,7 @@ class Interrupts : public BaseInterrupts
      * Constructor.
      */
 
-    Interrupts(Params * p);
+    Interrupts(const Params &p);
 
     /*
      * Functions for retrieving interrupts for the CPU to handle.

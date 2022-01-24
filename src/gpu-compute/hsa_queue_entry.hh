@@ -29,8 +29,6 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Anthony Gutierrez
  */
 
 /**
@@ -88,6 +86,19 @@ class HSAQueueEntry
           _globalWgId(0), dispatchComplete(false)
 
     {
+        // Precompiled BLIT kernels actually violate the spec a bit
+        // and don't set many of the required akc fields.  For these kernels,
+        // we need to rip register usage from the resource registers.
+        //
+        // We can't get an exact number of registers from the resource
+        // registers because they round, but we can get an upper bound on it
+        if (!numVgprs)
+            numVgprs = (akc->granulated_workitem_vgpr_count + 1) * 4;
+
+        // TODO: Granularity changes for GFX9!
+        if (!numSgprs)
+            numSgprs = (akc->granulated_wavefront_sgpr_count + 1) * 8;
+
         initialVgprState.reset();
         initialSgprState.reset();
 
@@ -404,8 +415,8 @@ class HSAQueueEntry
          * workitem Id in the X dimension is always initialized.
          */
         initialVgprState.set(WorkitemIdX, true);
-        initialVgprState.set(WorkitemIdY, akc->enable_vgpr_workitem_id_y);
-        initialVgprState.set(WorkitemIdZ, akc->enable_vgpr_workitem_id_z);
+        initialVgprState.set(WorkitemIdY, akc->enable_vgpr_workitem_id > 0);
+        initialVgprState.set(WorkitemIdZ, akc->enable_vgpr_workitem_id > 1);
     }
 
     // name of the kernel associated with the AQL entry
