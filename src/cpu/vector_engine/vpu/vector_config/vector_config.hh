@@ -53,7 +53,7 @@ class VectorConfig : public SimObject
 {
 
 public:
-    VectorConfig(VectorConfigParams *p);
+    VectorConfig(const VectorConfigParams &p);
     ~VectorConfig();
 
     uint64_t reqAppVectorLength(uint64_t rvl, uint64_t vtype);

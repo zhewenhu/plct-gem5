@@ -44,8 +44,8 @@
  * VPU local Configuration
  */
 
-VectorConfig::VectorConfig(VectorConfigParams *p) :
-SimObject(p) ,  max_vector_length(p->max_vl)
+VectorConfig::VectorConfig(const VectorConfigParams &p) :
+SimObject(p) ,  max_vector_length(p.max_vl)
 {
 }
 
@@ -163,9 +163,9 @@ VectorConfig::get_vtype_ediv(uint64_t vtype) {
     return EDIV;
 }
 
-VectorConfig *
-VectorConfigParams::create()
-{
-    return new VectorConfig(this);
-}
+// VectorConfig *
+// VectorConfigParams::create() const
+// {
+//     return new VectorConfig(*this);
+// }
 

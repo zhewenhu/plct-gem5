@@ -46,7 +46,7 @@
 class VectorValidBit : public SimObject
 {
 public:
-    VectorValidBit(VectorValidBitParams *p);
+    VectorValidBit(const VectorValidBitParams &p);
     ~VectorValidBit();
 
     //void startTicking();

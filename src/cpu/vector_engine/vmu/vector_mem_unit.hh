@@ -48,7 +48,7 @@ class VectorEngine;
 class VectorMemUnit : public SimObject
 {
   public:
-    VectorMemUnit(const VectorMemUnitParams *p);
+    VectorMemUnit(const VectorMemUnitParams &p);
     ~VectorMemUnit();
 
     bool isOccupied();

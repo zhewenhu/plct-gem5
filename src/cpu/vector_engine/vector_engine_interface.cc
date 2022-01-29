@@ -41,10 +41,10 @@
 #include "sim/sim_object.hh"
 
 VectorEngineInterface::VectorEngineInterface(
-    VectorEngineInterfaceParams *p
+    const VectorEngineInterfaceParams &p
 ):
 SimObject(p),
-vector_engine(p->vector_engine)
+vector_engine(p.vector_engine)
 {
 }
 
@@ -86,8 +86,8 @@ VectorEngineInterface::bussy()
     return bussy;
 }
 
-VectorEngineInterface *
-VectorEngineInterfaceParams::create()
-{
-    return new VectorEngineInterface(this);
-}
+// VectorEngineInterface *
+// VectorEngineInterfaceParams::create() const
+// {
+//     return new VectorEngineInterface(*this);
+// }

@@ -40,8 +40,8 @@
 /**
  *  Vector Renaming
  */
-VectorRename::VectorRename(VectorRenameParams *p) :
-SimObject(p), PhysicalRegs(p->PhysicalRegs)
+VectorRename::VectorRename(const VectorRenameParams &p) :
+SimObject(p), PhysicalRegs(p.PhysicalRegs)
 {
     DPRINTF(VectorRename, "Created the Renaming Unit object \n");
     for (uint64_t i=32; i<PhysicalRegs; i++) {
@@ -56,8 +56,8 @@ VectorRename::~VectorRename()
 {
 }
 
-VectorRename *
-VectorRenameParams::create()
-{
-    return new VectorRename(this);
-}
+// VectorRename *
+// VectorRenameParams::create() const
+// {
+//     return new VectorRename(*this);
+// }

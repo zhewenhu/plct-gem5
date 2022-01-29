@@ -38,9 +38,9 @@
 #include "base/types.hh"
 #include "debug/MemUnitWriteTiming.hh"
 
-MemUnitWriteTiming::MemUnitWriteTiming(MemUnitWriteTimingParams *p):
-    TickedObject(p), channel(p->channel), cacheLineSize(p->cacheLineSize),
-    VRF_LineSize(p->VRF_LineSize), done(false)
+MemUnitWriteTiming::MemUnitWriteTiming(const MemUnitWriteTimingParams &p):
+    TickedObject(p), channel(p.channel), cacheLineSize(p.cacheLineSize),
+    VRF_LineSize(p.VRF_LineSize), done(false)
 {
 }
 
@@ -277,8 +277,8 @@ MemUnitWriteTiming::initialize(VectorEngine& vector_wrapper, uint64_t count,
 }
 
 
-MemUnitWriteTiming *
-MemUnitWriteTimingParams::create()
-{
-    return new MemUnitWriteTiming(this);
-}
+// MemUnitWriteTiming *
+// MemUnitWriteTimingParams::create() const
+// {
+//     return new MemUnitWriteTiming(*this);
+// }

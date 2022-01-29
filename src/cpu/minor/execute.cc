@@ -595,7 +595,7 @@ Execute::issue(ThreadID thread_id)
             issued = true;
             discarded = true;
 #if THE_ISA == RISCV_ISA
-        } else if (inst->staticInst->isMemBarrier() &&
+        } else if (inst->staticInst->isFullMemBarrier() &&
                     (cpu.ve_interface->bussy() ||
                     !thread.inFlightInsts->empty())) {
             DPRINTF(CpuVectorIssue,"Fence Inst blocked the pipeline: %s"

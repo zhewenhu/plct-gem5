@@ -40,8 +40,8 @@
 #include "sim/faults.hh"
 #include "sim/ticked_object.hh"
 
-ReorderBuffer::ReorderBuffer(ReorderBufferParams *p):
-TickedObject(p),occupied(false), ROB_Size(p->ROB_Size)
+ReorderBuffer::ReorderBuffer(const ReorderBufferParams &p):
+TickedObject(p),occupied(false), ROB_Size(p.ROB_Size)
 {
     for (int i=0 ; i<ROB_Size ; i++) {
         rob.push_back(new rob_entry(0,0));
@@ -165,8 +165,8 @@ ReorderBuffer::set_rob_entry_executed(uint32_t idx)
     rob[idx]->executed = 1;
 }
 
-ReorderBuffer *
-ReorderBufferParams::create()
-{
-    return new ReorderBuffer(this);
-}
+// ReorderBuffer *
+// ReorderBufferParams::create() const
+// {
+//     return new ReorderBuffer(*this);
+// }

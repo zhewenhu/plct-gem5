@@ -76,7 +76,7 @@ public:
         bool issued;
     };
 
-    InstQueue(InstQueueParams *p);
+    InstQueue(const InstQueueParams &p);
     ~InstQueue();
 
     void startTicking(VectorEngine& vector_wrapper/*,

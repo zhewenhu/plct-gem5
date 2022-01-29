@@ -53,7 +53,7 @@ class VectorEngine;
 class VectorEngineInterface : public SimObject
 {
 public:
-    VectorEngineInterface(VectorEngineInterfaceParams *p);
+    VectorEngineInterface(const VectorEngineInterfaceParams &p);
     ~VectorEngineInterface();
 
     /**

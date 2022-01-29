@@ -49,7 +49,7 @@
 class VectorRegister : public ClockedObject
 {
 public:
-    class VectorRegisterPort : public QueuedSlavePort
+    class VectorRegisterPort : public QueuedResponsePort
     {
       public:
         VectorRegisterPort(const std::string& name,
@@ -67,7 +67,7 @@ public:
     };
 
 public:
-    VectorRegister(const VectorRegisterParams *p);
+    VectorRegister(const VectorRegisterParams &p);
     ~VectorRegister();
 
     Port& getPort(const std::string& if_name,

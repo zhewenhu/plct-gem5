@@ -42,7 +42,7 @@
 // vector_reg::VectorRegisterPort
 VectorRegister::VectorRegisterPort::VectorRegisterPort(
     const std::string &name, VectorRegister& vector_reg) :
-    QueuedSlavePort(name, &vector_reg, queue), queue(vector_reg, *this),
+    QueuedResponsePort(name, &vector_reg, queue), queue(vector_reg, *this),
     vector_reg(vector_reg)
 {
 }
@@ -100,11 +100,11 @@ VectorRegister::get_size()
     return size;
 }
 
-VectorRegister::VectorRegister(const VectorRegisterParams* p) :
-    ClockedObject(p),num_lanes(p->num_lanes),
-    num_regs(p->num_regs),mvl(p->mvl),
-    size(p->size), lineSize(p->lineSize),
-    numPorts(p->numPorts), accessLatency(p->accessLatency)
+VectorRegister::VectorRegister(const VectorRegisterParams &p) :
+    ClockedObject(p),num_lanes(p.num_lanes),
+    num_regs(p.num_regs),mvl(p.mvl),
+    size(p.size), lineSize(p.lineSize),
+    numPorts(p.numPorts), accessLatency(p.accessLatency)
 {
     assert(size % lineSize == 0);
     assert(lineSize % sizeof(float) == 0);
@@ -186,8 +186,8 @@ VectorRegister::getPort(const std::string &if_name, PortID idx)
     //}
 }
 
-VectorRegister *
-VectorRegisterParams::create()
-{
-    return new VectorRegister(this);
-}
+// VectorRegister *
+// VectorRegisterParams::create() const
+// {
+//     return new VectorRegister(*this);
+// }

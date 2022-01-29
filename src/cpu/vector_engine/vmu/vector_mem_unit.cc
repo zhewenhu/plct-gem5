@@ -41,12 +41,12 @@
 #include "sim/faults.hh"
 #include "sim/sim_object.hh"
 
-VectorMemUnit::VectorMemUnit(const VectorMemUnitParams *p) :
+VectorMemUnit::VectorMemUnit(const VectorMemUnitParams &p) :
     SimObject(p),
     occupied(false),
-    memReader(p->memReader),
-    memReader_addr(p->memReader_addr),
-    memWriter(p->memWriter)
+    memReader(p.memReader),
+    memReader_addr(p.memReader_addr),
+    memWriter(p.memWriter)
 {
 }
 
@@ -423,9 +423,9 @@ void VectorMemUnit::issue(VectorEngine& vector_wrapper,
 }
 
 
-VectorMemUnit *
-VectorMemUnitParams::create()
-{
-    return new VectorMemUnit(this);
-}
+// VectorMemUnit *
+// VectorMemUnitParams::create() const
+// {
+//     return new VectorMemUnit(*this);
+// }
 

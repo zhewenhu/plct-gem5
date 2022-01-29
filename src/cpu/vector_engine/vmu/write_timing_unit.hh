@@ -50,7 +50,7 @@ class VectorEngine;
 class MemUnitWriteTiming : public TickedObject
 {
 public:
-    MemUnitWriteTiming(MemUnitWriteTimingParams *p);
+    MemUnitWriteTiming(const MemUnitWriteTimingParams &p);
     ~MemUnitWriteTiming();
 
     // overrides

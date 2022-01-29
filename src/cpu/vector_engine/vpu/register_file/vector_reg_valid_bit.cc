@@ -35,8 +35,8 @@
 /**
  * Valid bits
  */
-VectorValidBit::VectorValidBit(VectorValidBitParams *p):
-SimObject(p), PhysicalRegs(p->PhysicalRegs)
+VectorValidBit::VectorValidBit(const VectorValidBitParams &p):
+SimObject(p), PhysicalRegs(p.PhysicalRegs)
 {
     for (uint64_t i=0; i<32; i++)
         {
@@ -130,8 +130,8 @@ VectorValidBit::print_valid_bit() {
     // Empty
 }
 
-VectorValidBit *
-VectorValidBitParams::create()
-{
-    return new VectorValidBit(this);
-}
+// VectorValidBit *
+// VectorValidBitParams::create() const
+// {
+//     return new VectorValidBit(*this);
+// }

@@ -46,11 +46,11 @@
 #include "sim/faults.hh"
 #include "sim/sim_object.hh"
 
-VectorLane::VectorLane(const VectorLaneParams* p) :
-    SimObject(p), lane_id(p->lane_id), occupied(false),
-    srcAReader(p->srcAReader), srcBReader(p->srcBReader),
-    srcMReader(p->srcMReader), dstReader(p->dstReader), dstWriter(p->dstWriter),
-    dataPath(p->dataPath)
+VectorLane::VectorLane(const VectorLaneParams &p) :
+    SimObject(p), lane_id(p.lane_id), occupied(false),
+    srcAReader(p.srcAReader), srcBReader(p.srcBReader),
+    srcMReader(p.srcMReader), dstReader(p.dstReader), dstWriter(p.dstWriter),
+    dataPath(p.dataPath)
 {
     DPRINTF(VectorEngineInfo, "Created a new Cluster with id: %d\n", lane_id);
 }
@@ -503,9 +503,9 @@ VectorLane::issue(VectorEngine& vector_wrapper,
 }
 
 
-VectorLane*
-VectorLaneParams::create()
-{
-    return new VectorLane(this);
-}
+// VectorLane*
+// VectorLaneParams::create() const
+// {
+//     return new VectorLane(*this);
+// }
 

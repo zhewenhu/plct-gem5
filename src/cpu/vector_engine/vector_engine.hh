@@ -82,7 +82,7 @@
 class VectorEngine : public SimObject
 {
 public:
-    class VectorMemPort : public MasterPort
+    class VectorMemPort : public RequestPort
     {
       public:
         VectorMemPort(const std::string& name, VectorEngine* owner,
@@ -125,7 +125,7 @@ public:
         };
     };
 
-    class VectorRegPort : public MasterPort
+    class VectorRegPort : public RequestPort
     {
     public:
         VectorRegPort(const std::string& name, VectorEngine* owner,
@@ -144,15 +144,15 @@ public:
         const uint64_t channel;
     };
 public:
-    VectorEngine(VectorEngineParams *p);
+    VectorEngine(const VectorEngineParams &p);
     ~VectorEngine();
 
     VectorConfig  *   vector_config;
     //used to identify ports uniquely to whole memory system
-    MasterID VectorCacheMasterId;
+    RequestorID VectorCacheMasterId;
     VectorMemPort vectormem_port;
     //used to identify ports uniquely to whole memory system
-    std::vector<MasterID> VectorRegMasterIds;
+    std::vector<RequestorID> VectorRegMasterIds;
     std::vector<VectorRegPort> VectorRegPorts;
 
     VectorRegister * vector_reg;
@@ -160,7 +160,7 @@ public:
     //                             PortID idx = InvalidPortID)/* override*/;
     Port& getPort(const std::string& if_name,
                                   PortID idx = InvalidPortID) override;
-    MasterPort &getVectorMemPort() { return vectormem_port; }
+    RequestPort &getVectorMemPort() { return vectormem_port; }
 
     void recvTimingResp(VectorPacketPtr pkt);
 

@@ -42,8 +42,8 @@
 #include "debug/VectorEngine.hh"
 
 Datapath::Datapath(
-    DatapathParams *p) :
-    TickedObject(p), VectorLanes(p->VectorLanes)
+    const DatapathParams &p) :
+    TickedObject(p), VectorLanes(p.VectorLanes)
 {
 }
 
@@ -941,10 +941,10 @@ Datapath::evaluate()
     }));
 }
 
-Datapath *
-DatapathParams::create()
-{
-    return new Datapath(this);
-}
+// Datapath *
+// DatapathParams::create() const
+// {
+//     return new Datapath(*this);
+// }
 
 

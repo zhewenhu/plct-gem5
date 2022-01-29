@@ -45,27 +45,27 @@
 #include "sim/faults.hh"
 #include "sim/sim_object.hh"
 
-VectorEngine::VectorEngine(VectorEngineParams *p) :
+VectorEngine::VectorEngine(const VectorEngineParams &p) :
 SimObject(p),
-vector_config(p->vector_config),
-VectorCacheMasterId(p->system->getMasterId(this, name() + ".vector_cache")),
-vectormem_port(name() + ".vector_mem_port", this, p->vector_rf_ports),
-vector_reg(p->vector_reg),
+vector_config(p.vector_config),
+VectorCacheMasterId(p.system->getRequestorId(this, name() + ".vector_cache")),
+vectormem_port(name() + ".vector_mem_port", this, p.vector_rf_ports),
+vector_reg(p.vector_reg),
 uniqueReqId(0),
-num_clusters(p->num_clusters),
-num_lanes(p->num_lanes),
-vector_rob(p->vector_rob),
-vector_lane(p->vector_lane),
-vector_memory_unit(p->vector_memory_unit),
-vector_inst_queue(p->vector_inst_queue),
-vector_rename(p->vector_rename),
-vector_reg_validbit(p->vector_reg_validbit),
+num_clusters(p.num_clusters),
+num_lanes(p.num_lanes),
+vector_rob(p.vector_rob),
+vector_lane(p.vector_lane),
+vector_memory_unit(p.vector_memory_unit),
+vector_inst_queue(p.vector_inst_queue),
+vector_rename(p.vector_rename),
+vector_reg_validbit(p.vector_reg_validbit),
 last_vtype(0),
 last_vl(0)
 {
     //create independent ports
-    for (uint8_t i=0; i< p->vector_rf_ports; ++i) {
-        VectorRegMasterIds.push_back(p->system->getMasterId(this, name()
+    for (uint8_t i=0; i< p.vector_rf_ports; ++i) {
+        VectorRegMasterIds.push_back(p.system->getRequestorId(this, name()
             + ".vector_reg" + std::to_string(i)));
         VectorRegPorts.push_back(VectorRegPort(name()
             + ".vector_reg_port", this, i));
@@ -96,7 +96,7 @@ last_vl(0)
     DPRINTF(VectorEngineInfo,"Lanes per Cluster: %d\n",num_lanes/num_clusters);
     DPRINTF(VectorEngineInfo,"Vector Memory Unit Port connected to l2 bus\n");
 
-    VectorEngine::s_VLENB = p->vector_config->get_mvl_lmul1_bits() / 8;
+    VectorEngine::s_VLENB = p.vector_config->get_mvl_lmul1_bits() / 8;
 }
 
 VectorEngine::~VectorEngine()
@@ -534,7 +534,7 @@ VectorEngine::getPort(const std::string &if_name, PortID idx)
 
 VectorEngine::VectorMemPort::VectorMemPort(const std::string& name,
     VectorEngine* owner, uint8_t channels) :
-    MasterPort(name, owner), owner(owner)
+    RequestPort(name, owner), owner(owner)
 {
     //create the queues for each of the channels to the Vector Cache
     for (uint8_t i=0; i<channels; ++i) {
@@ -625,7 +625,7 @@ VectorEngine::VectorMemPort::startTranslation(Addr addr, uint8_t *data,
     //start translation
     Tlb_Translation *translation = new Tlb_Translation(owner);
 
-    tc->getDTBPtr()->translateTiming(req, tc, translation , mode);
+    tc->getMMUPtr()->translateTiming(req, tc, translation , mode);
 
     if (translation->fault == NoFault){
         PacketPtr pkt = new VectorPacket(req, cmd, req_id, channel);
@@ -686,7 +686,7 @@ VectorEngine::VectorMemPort::recvReqRetry()
 
 VectorEngine::VectorRegPort::VectorRegPort(const std::string& name,
     VectorEngine* owner, uint64_t channel) :
-    MasterPort(name, owner), owner(owner), channel(channel)
+    RequestPort(name, owner), owner(owner), channel(channel)
 {
 }
 
@@ -854,8 +854,8 @@ int VectorEngine::getVlenb() {
     return VectorEngine::s_VLENB;
 }
 
-VectorEngine *
-VectorEngineParams::create()
-{
-    return new VectorEngine(this);
-}
+// VectorEngine *
+// VectorEngineParams::create() const
+// {
+//     return new VectorEngine(*this);
+// }

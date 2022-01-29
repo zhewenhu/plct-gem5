@@ -40,11 +40,11 @@
 #include "debug/InstQueueInst.hh"
 #include "debug/InstQueueRenInst.hh"
 
-InstQueue::InstQueue(InstQueueParams *p) :
+InstQueue::InstQueue(const InstQueueParams &p) :
 TickedObject(p), occupied(false),
-OoO_queues(p->OoO_queues),
-vector_mem_queue_size(p->vector_mem_queue_size),
-vector_arith_queue_size(p->vector_arith_queue_size)
+OoO_queues(p.OoO_queues),
+vector_mem_queue_size(p.vector_mem_queue_size),
+vector_arith_queue_size(p.vector_arith_queue_size)
 {
 }
 
@@ -473,9 +473,9 @@ InstQueue::printArithInst(RiscvISA::VectorStaticInst& insn,VectorDynInst *vector
 }
 
 
-InstQueue *
-InstQueueParams::create()
-{
-    return new InstQueue(this);
-}
+// InstQueue *
+// InstQueueParams::create() const
+// {
+//     return new InstQueue(*this);
+// }
 

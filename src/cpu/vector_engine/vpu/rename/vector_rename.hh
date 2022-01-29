@@ -48,7 +48,7 @@
 class VectorRename : public SimObject
 {
 public:
-    VectorRename(VectorRenameParams *p);
+    VectorRename(const VectorRenameParams &p);
     ~VectorRename();
 
     const uint64_t PhysicalRegs;

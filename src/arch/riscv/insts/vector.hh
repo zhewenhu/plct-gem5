@@ -58,11 +58,11 @@ class RiscvVectorDataOp : public RiscvVectorInsn
             if ((func3()==4) || (func3()==6)) {
                 _numSrcRegs = 1;
                 _numDestRegs = 0;
-                _srcRegIdx[0] = RegId(IntRegClass, vs1());
+                setSrcRegIdx(0, RegId(IntRegClass, vs1()));
             } else if ((func3()==5)) {
                 _numSrcRegs = 1;
                 _numDestRegs = 0;
-                _srcRegIdx[0] = RegId(FloatRegClass, vs1());
+                setSrcRegIdx(0, RegId(FloatRegClass, vs1()));
             } else {
                 _numSrcRegs = 0;
                 _numDestRegs = 0;
@@ -91,14 +91,14 @@ class RiscvVectorCfgOp : public RiscvVectorInsn
             if (getName() == "vsetvli") {
              _numSrcRegs =  1;
              _numDestRegs = 1;
-             _srcRegIdx[0] = RegId(IntRegClass, vs1());
-             _destRegIdx[0] = RegId(IntRegClass, vd());
+             setSrcRegIdx(0, RegId(IntRegClass, vs1()));
+             setDestRegIdx(0, RegId(IntRegClass, vd()));
              } else {
              _numSrcRegs =  2;
              _numDestRegs = 1;
-             _srcRegIdx[0] = RegId(IntRegClass, vs1());
-             _srcRegIdx[1] = RegId(IntRegClass, vs2());
-             _destRegIdx[0] = RegId(IntRegClass, vd());
+             setSrcRegIdx(0, RegId(IntRegClass, vs1()));
+             setSrcRegIdx(1, RegId(IntRegClass, vs2()));
+             setDestRegIdx(0, RegId(IntRegClass, vd()));
              }
         }
 
@@ -125,12 +125,12 @@ class RiscvVectorMemOp : public RiscvVectorInsn
           if(mop()==2) { // Strided memory access
             _numSrcRegs =  2;
             _numDestRegs = 0;
-            _srcRegIdx[0] = RegId(IntRegClass, vs1());
-            _srcRegIdx[1] = RegId(IntRegClass, vs2());
+            setSrcRegIdx(0, RegId(IntRegClass, vs1()));
+            setSrcRegIdx(1, RegId(IntRegClass, vs2()));
           } else {
             _numSrcRegs =  1;
             _numDestRegs = 0;
-            _srcRegIdx[0] = RegId(IntRegClass, vs1());
+            setSrcRegIdx(0, RegId(IntRegClass, vs1()));
           }
         }
 
@@ -155,15 +155,15 @@ class RiscvVectorToScalarOp : public RiscvVectorInsn
             if ((func3()==1)) {
                 _numSrcRegs = 0;
                 _numDestRegs = 1;
-                _destRegIdx[0] = RegId(FloatRegClass, vd());
+                setDestRegIdx(0, RegId(FloatRegClass, vd()));
             } else if ((func3()==2)) {
                 _numSrcRegs = 0;
                 if ((func6()==12)) {
                   _numSrcRegs = 1;
-                  _srcRegIdx[0] = RegId(IntRegClass, vs1());
+                  setSrcRegIdx(0, RegId(IntRegClass, vs1()));
                 }
                 _numDestRegs = 1;
-                _destRegIdx[0] = RegId(IntRegClass, vd());
+                setDestRegIdx(0, RegId(IntRegClass, vd()));
             }
         }
 
