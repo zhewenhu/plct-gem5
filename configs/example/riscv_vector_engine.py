@@ -314,31 +314,31 @@ system.membus = SystemXBar()
 ###############################################################################
 
 def connect_cpu_ports1(cpu, vector_engine, l1bus, l2bus):
-    cpu.icache.mem_side = l2bus.slave
-    cpu.dcache.mem_side = l2bus.slave
+    cpu.icache.mem_side = l2bus.cpu_side_ports
+    cpu.dcache.mem_side = l2bus.cpu_side_ports
     cpu.icache_port = cpu.icache.cpu_side
-    cpu.dcache_port = l1bus.slave
+    cpu.dcache_port = l1bus.cpu_side_ports
 
-    vector_engine.vector_mem_port = l1bus.slave
-    l1bus.master = cpu.dcache.cpu_side
+    vector_engine.vector_mem_port = l1bus.cpu_side_ports
+    l1bus.mem_side_ports = cpu.dcache.cpu_side
 
     # Connect vector_reg ports for each mem_unit
     for _ in range(0, vector_rf_ports):
         vector_engine.vector_reg_port = vector_engine.vector_reg.port
 
 def connect_cpu_ports2(cpu,vector_engine,l2bus,membus):
-    cpu.icache.mem_side = l2bus.slave
-    cpu.dcache.mem_side = l2bus.slave
+    cpu.icache.mem_side = l2bus.cpu_side_ports
+    cpu.dcache.mem_side = l2bus.cpu_side_ports
     cpu.icache_port = cpu.icache.cpu_side
     cpu.dcache_port = cpu.dcache.cpu_side
 
     vector_engine.vector_mem_port = system.VectorCache.cpu_side
     if connect_to_l1V:
-        system.VectorCache.mem_side = l2bus.slave
+        system.VectorCache.mem_side = l2bus.cpu_side_ports
     elif connect_to_l2:
-        system.VectorCache.mem_side = l2bus.slave
+        system.VectorCache.mem_side = l2bus.cpu_side_ports
     elif connect_to_dram:
-        system.VectorCache.mem_side = membus.slave
+        system.VectorCache.mem_side = membus.cpu_side_ports
 
     for _ in range(0, vector_rf_ports):
         vector_engine.vector_reg_port = vector_engine.vector_reg.port
@@ -365,19 +365,20 @@ system.l2cache = Cache(
     tgts_per_mshr = 12
 )
 
-system.l2cache.mem_side = system.membus.slave
-system.l2cache.cpu_side = system.l2bus.master
+system.l2cache.mem_side = system.membus.cpu_side_ports
+system.l2cache.cpu_side = system.l2bus.mem_side_ports
 
 # Create interrupt controller
 system.cpu.createInterruptController()
 
 # Connect the system up to the membus
-system.system_port = system.membus.slave
+system.system_port = system.membus.cpu_side_ports
 
 # Create a DDR3 memory controller
-system.mem_ctrl = DDR3_1600_8x8(device_size = options.mem_size)
-system.mem_ctrl.range = system.mem_ranges[0]
-system.mem_ctrl.port = system.membus.master
+system.mem_ctrl = MemCtrl()
+system.mem_ctrl.dram = DDR3_1600_8x8(device_size = options.mem_size)
+system.mem_ctrl.dram.range = system.mem_ranges[0]
+system.mem_ctrl.port = system.membus.mem_side_ports
 
 ###############################################################################
 # Create Workload
@@ -398,6 +399,7 @@ else:
 
 
     process.executable = filtered[0]
+    system.workload = SEWorkload.init_compatible(process.executable)
     process.cmd = filtered
 
 system.cpu.workload = process
